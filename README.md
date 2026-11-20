@@ -1,4 +1,4 @@
-# Brogue CE for the original RG35XX — v1.0.0
+# Brogue CE for MiaUI
 
 Brogue CE 1.15.1 port for original Anbernic RG35XX, running **MiaUI**. It is adapts the game to be played with gamepad controls, adds new Start menu drawn in Brogue's tile font, zoom levels that make text readable on a small screen, and
 inventory and dialogs that scale along with the map.
@@ -8,16 +8,13 @@ It installs as a single `BrogueCE.pak` under `/userdata/Ports/`.
 ## Install and launch
 
 1. Copy the `BrogueCE.pak/` directory from the release zip into `/userdata/Ports/` on the RG35XX.
-2. Ensure `brogue` and `launch.sh` are executable (`chmod 755`); the packaged files already are.
-3. Launch **BrogueCE** from MiaUI's Ports menu. `launch.sh` keeps all relative files (saves, config,
+2. Launch **BrogueCE** from MiaUI's Ports menu. `launch.sh` keeps all relative files (saves, config,
    high scores, `zoom.cfg`) inside the pak.
-4. To update an install, replace only `brogue` and `launch.sh`; keep your saves.
 
 The release zip contains no save data. Installation is a manual copy.
 
 ## Controls
 
-This is the same list shown by **Help** in the game:
 
 ```
         -- Commands (RG35XX gamepad) --
@@ -46,12 +43,6 @@ This is the same list shown by **Help** in the game:
         -- press A to continue --
 ```
 
-**Start menu** (physical Menu button): Save & Exit, Help, Colours, Stealth range, Graphics, Zoom,
-Return to game, Quit. Up/Down navigate; A changes a value or confirms; B goes back.
-
-**Save-load speed:** `launch.sh` temporarily raises the CPU to MinUI's game speed (~1.2 GHz) and
-restores the stock 504 MHz setting when the game exits. This cuts loading a long saved game from
-about 26 seconds to about 12 seconds on this device.
 
 ## Features
 
