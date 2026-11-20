@@ -1,0 +1,7 @@
+# Pinned upstream Brogue CE source for this project.
+# First non-comment field is consumed by scripts/lib.sh (pinned_commit()).
+22c64f58f92509364525800ddbde21b724911c22
+# human-readable describe: v1.15.1-60-g22c64f5
+# upstream URL: https://github.com/tmewett/BrogueCE.git
+# upstream branch at pin: master
+# CE version: 1.15.1

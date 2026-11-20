@@ -1,0 +1,92 @@
+--- a/src/brogue/IO.c
++++ b/src/brogue/IO.c
+@@ -504,16 +504,22 @@
+         buttonCount++;
+     } else {
+ #ifdef BROGUE_HANDHELD
+-        strcpy(buttons[buttonCount].text, " Explore ");
++        /* Explore is reached with Menu+A (see the held Menu action layer), so
++         * it no longer occupies a slot in the bottom action bar. Slot 0 stays
++         * disabled and is skipped by the layout loop below; the Menu action
++         * remains at slot 3 (mainInputLoop's hardcoded buttonChosen == 3). */
++        buttons[buttonCount].flags &= ~(B_DRAW | B_ENABLED);
++        buttons[buttonCount].text[0] = '\0';
++        buttonCount++;
+ #else
+         sprintf(buttons[buttonCount].text,  "   E%sx%splore   ", goldTextEscape, whiteTextEscape);
+-#endif
+         buttons[buttonCount].hotkey[0] = EXPLORE_KEY;
+         buttons[buttonCount].hotkey[1] = 'X';
+         buttonCount++;
++#endif
+ 
+ #ifdef BROGUE_HANDHELD
+-        strcpy(buttons[buttonCount].text, " Rest ");
++        strcpy(buttons[buttonCount].text, " Wait (L2) ");
+ #else
+         if (KEYBOARD_LABELS) {
+             sprintf(buttons[buttonCount].text,  "   Rest (%sz%s)   ", goldTextEscape, whiteTextEscape);
+@@ -550,6 +556,9 @@
+ 
+     x = mapToWindowX(0);
+     for (i=0; i<5; i++) {
++        if (!(buttons[i].flags & B_DRAW)) {
++            continue; // slot intentionally left empty (Explore on handheld)
++        }
+         buttons[i].x = x;
+         x += strLenWithoutEscapes(buttons[i].text) + 2; // Gap between buttons.
+     }
+@@ -4387,27 +4396,28 @@
+     short i, j;
+     char helpText[BROGUE_HELP_LINE_COUNT][DCOLS*3] = {
+ #ifdef BROGUE_HANDHELD
+-        "",
+-        "",
+         "        -- Commands (RG35XX gamepad) --",
+         "",
+         "       D-pad  ****move / attack / aim",
+         "     A / B  ****confirm / cancel",
+         "          X  ****view inventory",
+         "          Y  ****cycle zoom (100 / 200 / 300%)",
+-        "      Start  ****in-game menu",
++        "       Menu  ****in-game menu",
+         "     Select  ****message history / next target",
+-        "         L1  ****hold to run",
++        "         L1  ****hold + D-pad to run",
+         "         R1  ****hold + D-pad for diagonals",
+         "         L2  ****wait one turn",
+         "         R2  ****search for secrets",
++        "          A  ****inspect",
+         "",
+-        "  Inspect (A in play):",
+-        "       D-pad  ****move inspect cursor   A  ****finish",
+-        "",
+-        "     In text entry:",
+-        "     D-pad  ****move key focus",
+-        "     A / B  ****type / cancel    X  ****backspace    Y  ****shift",
++        "  -- hold Menu button + --",
++        "          A  ****auto-explore",
++        "          X  ****discoveries",
++        "          Y  ****feats",
++        "    D-pad L  ****swap equipment",
++        "    D-pad R  ****re-throw",
++        "         L2  ****rest until healed",
++        "         R2  ****long search",
+         "",
+         "        -- press A to continue --"
+ #else
+--- a/src/platform/tiles.c
++++ b/src/platform/tiles.c
+@@ -724,6 +724,12 @@
+             zoomTileWidth = zoomTileHeight = -1;
+         }
+         hhCameraLevel = level;
++        /* The title screen and 100% zoom use the native transform. Without
++         * this reset, leaving a zoomed inventory/confirm leaves hhViewMode at
++         * 2 and the modal viewport keeps clipping the main menu to a narrow
++         * strip after Quit/Cancel. */
++        hhViewMode = 0;
++        hhInvDynamic = 0;
+         return;
+     }
+ 

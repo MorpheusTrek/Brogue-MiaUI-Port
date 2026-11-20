@@ -1,0 +1,111 @@
+--- a/src/brogue/GlobalsBase.h
++++ b/src/brogue/GlobalsBase.h
+@@ -83,6 +83,21 @@
+ extern enum autoTargetMode hhTargetingMode;
+ extern const item *hhTargetItem;
+ #endif
++
++#ifdef BROGUE_HANDHELD
++/* Handheld UI text-input hook (Stage 3, M3.7). Set for the interactive duration
++ * of getInputTextString(); read-only from the platform layer, compiled out of
++ * stock builds. All pointers alias core params/locals and are valid only while
++ * hhTextInputActive is true. The buffer is space-padded and NUL-terminated only
++ * on exit, so the live cursor pointer, not strlen(), determines used length. */
++extern boolean      hhTextInputActive;
++extern char        *hhTextInputBuffer;
++extern const char  *hhTextInputPrompt;
++extern const char  *hhTextInputSuffix;
++extern short       *hhTextInputCursor;
++extern short        hhTextInputMaxLength;
++extern short        hhTextInputType;    /* enum textEntryTypes */
++#endif
+ extern int gameVariant;
+ extern creatureList *monsters;
+ extern creatureList *dormantMonsters;
+--- a/src/brogue/GlobalsBase.c
++++ b/src/brogue/GlobalsBase.c
+@@ -57,6 +57,16 @@
+ enum autoTargetMode hhTargetingMode = AUTOTARGET_MODE_NONE;
+ const item *hhTargetItem = NULL;
+ #endif
++
++#ifdef BROGUE_HANDHELD
++boolean      hhTextInputActive      = false;
++char        *hhTextInputBuffer     = NULL;
++const char  *hhTextInputPrompt     = NULL;
++const char  *hhTextInputSuffix     = NULL;
++short       *hhTextInputCursor     = NULL;
++short        hhTextInputMaxLength  = 0;
++short        hhTextInputType       = TEXT_INPUT_NORMAL;
++#endif
+ int gameVariant = VARIANT_BROGUE;
+ creatureList *monsters;
+ creatureList *dormantMonsters;
+--- a/src/brogue/IO.c
++++ b/src/brogue/IO.c
+@@ -2730,6 +2730,18 @@
+     screenDisplayBuffer dbuf;
+     SavedDisplayBuffer rbuf;
+ 
++#ifdef BROGUE_HANDHELD
++    /* Expose the live text-entry session to the handheld OSK overlay.  Save
++     * prior values so a nested prompt restores our state on the way out. */
++    boolean      hhPrevTextInputActive     = hhTextInputActive;
++    char        *hhPrevTextInputBuffer     = hhTextInputBuffer;
++    const char  *hhPrevTextInputPrompt     = hhTextInputPrompt;
++    const char  *hhPrevTextInputSuffix     = hhTextInputSuffix;
++    short       *hhPrevTextInputCursor     = hhTextInputCursor;
++    short        hhPrevTextInputMaxLength  = hhTextInputMaxLength;
++    short        hhPrevTextInputType       = hhTextInputType;
++#endif
++
+     // handle defaultEntry values exceeding maxLength
+     promptSuffixLen = strlen(promptSuffix);
+     defaultEntrylengthOverflow = strlen(defaultEntry) + promptSuffixLen - maxLength;
+@@ -2776,6 +2788,17 @@
+         strcpy(suffix, promptSuffix);
+     }
+ 
++#ifdef BROGUE_HANDHELD
++    /* Local normalization is complete; publish the session before the loop. */
++    hhTextInputActive     = true;
++    hhTextInputBuffer     = inputText;
++    hhTextInputPrompt     = prompt;
++    hhTextInputSuffix     = suffix;
++    hhTextInputCursor     = &charNum;
++    hhTextInputMaxLength  = maxLength;
++    hhTextInputType       = textEntryType;
++#endif
++
+     do {
+         printString(suffix, charNum + x, y, &gray, &black, 0);
+         plotCharWithColor((suffix[0] ? suffix[0] : ' '), (windowpos){ x + charNum, y }, &black, &white);
+@@ -2831,10 +2854,28 @@
+     inputText[charNum] = '\0';
+ 
+     if (keystroke == ESCAPE_KEY) {
++#ifdef BROGUE_HANDHELD
++        hhTextInputActive     = hhPrevTextInputActive;
++        hhTextInputBuffer     = hhPrevTextInputBuffer;
++        hhTextInputPrompt     = hhPrevTextInputPrompt;
++        hhTextInputSuffix     = hhPrevTextInputSuffix;
++        hhTextInputCursor     = hhPrevTextInputCursor;
++        hhTextInputMaxLength  = hhPrevTextInputMaxLength;
++        hhTextInputType       = hhPrevTextInputType;
++#endif
+         return false;
+     }
+     strcat(displayedMessage[0], inputText);
+     strcat(displayedMessage[0], suffix);
++#ifdef BROGUE_HANDHELD
++    hhTextInputActive     = hhPrevTextInputActive;
++    hhTextInputBuffer     = hhPrevTextInputBuffer;
++    hhTextInputPrompt     = hhPrevTextInputPrompt;
++    hhTextInputSuffix     = hhPrevTextInputSuffix;
++    hhTextInputCursor     = hhPrevTextInputCursor;
++    hhTextInputMaxLength  = hhPrevTextInputMaxLength;
++    hhTextInputType       = hhPrevTextInputType;
++#endif
+     return true;
+ }
+ 

@@ -1,0 +1,13 @@
+--- a/src/platform/main.c
++++ b/src/platform/main.c
+@@ -90,7 +90,9 @@
+     exit(0);
+ #endif
+ 
+-#ifdef BROGUE_SDL
++#ifdef BROGUE_HANDHELD
++    currentConsole = handheldConsole;
++#elif defined(BROGUE_SDL)
+     currentConsole = sdlConsole;
+ #elif BROGUE_WEB
+     currentConsole = webConsole;

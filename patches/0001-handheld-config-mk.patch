@@ -1,0 +1,12 @@
+--- a/config.mk
++++ b/config.mk
+@@ -15,6 +15,9 @@
+ # Select web brogue mode. Requires POSIX system.
+ WEBBROGUE := NO
+ 
++# Select the RG35XX handheld backend (adds platform/handheld-*.c).
++BROGUE_HANDHELD := 0
++
+ # Enable debugging mode. See top of Rogue.h for features
+ DEBUG := NO
+ 

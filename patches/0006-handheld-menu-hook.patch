@@ -1,0 +1,92 @@
+--- a/src/brogue/GlobalsBase.h
++++ b/src/brogue/GlobalsBase.h
+@@ -58,6 +58,12 @@
+ extern creature player;
+ extern playerCharacter rogue;
+ extern const gameConstants *gameConst;
++
++#ifdef BROGUE_HANDHELD
++/* Handheld UI hook. Points at the active menu/dialog button state, or NULL
++ * when no menu is open. Set by titleMenu() and buttonInputLoop(); read-only. */
++extern buttonState *hhActiveMenuState;
++#endif
+ extern int gameVariant;
+ extern creatureList *monsters;
+ extern creatureList *dormantMonsters;
+--- a/src/brogue/GlobalsBase.c
++++ b/src/brogue/GlobalsBase.c
+@@ -42,6 +42,10 @@
+ creature player;
+ playerCharacter rogue;
+ const gameConstants *gameConst;
++
++#ifdef BROGUE_HANDHELD
++buttonState *hhActiveMenuState = NULL;
++#endif
+ int gameVariant = VARIANT_BROGUE;
+ creatureList *monsters;
+ creatureList *dormantMonsters;
+--- a/src/brogue/MainMenu.c
++++ b/src/brogue/MainMenu.c
+@@ -521,6 +521,12 @@
+     brogueButton flyoutButtons[10];
+     screenDisplayBuffer flyoutShadowBuf;
+ 
++#ifdef BROGUE_HANDHELD
++    // Expose the active menu state to the handheld UI overlay (read-only).
++    buttonState *hhPrevMenuState = hhActiveMenuState;
++    hhActiveMenuState = &mainMenu;
++#endif
++
+     // Initialize the RNG so the flames aren't always the same.
+     seedRandomGenerator(0);
+ 
+@@ -549,6 +555,13 @@
+         if (isFlyoutActive()) {
+             bPos = getNextGameButtonPos(mainButtons);
+             initializeFlyoutMenu(&flyoutMenu, &flyoutShadowBuf, flyoutButtons, (windowpos){FLYOUT_X, bPos.window_y});
++#ifdef BROGUE_HANDHELD
++            hhActiveMenuState = &flyoutMenu;
++#endif
++        } else {
++#ifdef BROGUE_HANDHELD
++            hhActiveMenuState = &mainMenu;
++#endif
+         }
+ 
+         // Inner input loop until the user selects a button or presses a key. For mouse input, a button
+@@ -617,6 +630,9 @@
+             }
+         } while (theEvent.eventType != MOUSE_UP && theEvent.eventType != KEYSTROKE && (isFlyoutActive() || rogue.nextGame == NG_NOTHING));
+     } while (isFlyoutActive() || rogue.nextGame == NG_NOTHING);
++#ifdef BROGUE_HANDHELD
++    hhActiveMenuState = hhPrevMenuState;
++#endif
+     drawMenuFlames(flames, mask);
+ }
+ 
+--- a/src/brogue/Buttons.c
++++ b/src/brogue/Buttons.c
+@@ -332,6 +332,12 @@
+     rogueEvent theEvent;
+     buttonState state = {0};
+ 
++#ifdef BROGUE_HANDHELD
++    // Expose the active dialog state to the handheld UI overlay (read-only).
++    buttonState *hhPrevMenuState = hhActiveMenuState;
++    hhActiveMenuState = &state;
++#endif
++
+     assureCosmeticRNG;
+ 
+     canceled = false;
+@@ -364,5 +370,9 @@
+ 
+     restoreRNG;
+ 
++#ifdef BROGUE_HANDHELD
++    hhActiveMenuState = hhPrevMenuState;
++#endif
++
+     return button;
+ }

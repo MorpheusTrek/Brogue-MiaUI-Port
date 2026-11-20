@@ -1,0 +1,13 @@
+--- a/src/platform/platform.h
++++ b/src/platform/platform.h
+@@ -109,6 +109,10 @@
+ extern struct brogueConsole webConsole;
+ #endif
+ 
++#ifdef BROGUE_HANDHELD
++extern struct brogueConsole handheldConsole;
++#endif
++
+ extern struct brogueConsole nullConsole;
+ 
+ extern struct brogueConsole currentConsole;

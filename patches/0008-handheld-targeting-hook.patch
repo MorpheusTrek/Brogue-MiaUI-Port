@@ -1,0 +1,100 @@
+--- a/src/brogue/GlobalsBase.h
++++ b/src/brogue/GlobalsBase.h
+@@ -73,6 +73,16 @@
+ extern boolean hhInventoryOpen;
+ extern item *hhInventoryItem;
+ #endif
++
++#ifdef BROGUE_HANDHELD
++/* Handheld UI targeting hook (Stage 3, M3.6). Set for the interactive duration
++ * of chooseTarget(); read-only from the platform layer, compiled out of stock
++ * builds. hhTargetingMode is the enum autoTargetMode passed to chooseTarget();
++ * hhTargetItem is the thrown/zapped item, or NULL. */
++extern boolean hhTargetingActive;
++extern enum autoTargetMode hhTargetingMode;
++extern const item *hhTargetItem;
++#endif
+ extern int gameVariant;
+ extern creatureList *monsters;
+ extern creatureList *dormantMonsters;
+--- a/src/brogue/GlobalsBase.c
++++ b/src/brogue/GlobalsBase.c
+@@ -51,6 +51,12 @@
+ boolean hhInventoryOpen = false;
+ item *hhInventoryItem = NULL;
+ #endif
++
++#ifdef BROGUE_HANDHELD
++boolean hhTargetingActive = false;
++enum autoTargetMode hhTargetingMode = AUTOTARGET_MODE_NONE;
++const item *hhTargetItem = NULL;
++#endif
+ int gameVariant = VARIANT_BROGUE;
+ creatureList *monsters;
+ creatureList *dormantMonsters;
+--- a/src/brogue/Items.c
++++ b/src/brogue/Items.c
+@@ -5644,6 +5644,14 @@
+     color trajColor;
+     bolt theBolt;
+ 
++#ifdef BROGUE_HANDHELD
++    // Expose the active targeting session to the handheld UI overlay (read-only).
++    // Save prior values so a nested chooseTarget() restores our state.
++    boolean hhPrevTargetingActive = hhTargetingActive;
++    enum autoTargetMode hhPrevTargetingMode = hhTargetingMode;
++    const item *hhPrevTargetItem = hhTargetItem;
++#endif
++
+     // choose the bolt and color to use for highlighting the path to the target
+     if (theItem && (targetMode == AUTOTARGET_MODE_USE_STAFF_OR_WAND)
+         && ((theItem->category == STAFF) || (theItem->category == WAND))) {
+@@ -5670,6 +5678,12 @@
+         return true;
+     }
+ 
++#ifdef BROGUE_HANDHELD
++    hhTargetingActive = true;
++    hhTargetingMode = targetMode;
++    hhTargetItem = theItem;
++#endif
++
+     oldRNG = rogue.RNG;
+     rogue.RNG = RNG_COSMETIC;
+ 
+@@ -5713,6 +5727,11 @@
+             confirmMessages();
+             rogue.cursorLoc = INVALID_POS;
+             restoreRNG;
++#ifdef BROGUE_HANDHELD
++            hhTargetingActive = hhPrevTargetingActive;
++            hhTargetingMode = hhPrevTargetingMode;
++            hhTargetItem = hhPrevTargetItem;
++#endif
+             return false;
+         }
+ 
+@@ -5775,6 +5794,11 @@
+         confirmMessages();
+         restoreRNG;
+         rogue.cursorLoc = INVALID_POS;
++#ifdef BROGUE_HANDHELD
++        hhTargetingActive = hhPrevTargetingActive;
++        hhTargetingMode = hhPrevTargetingMode;
++        hhTargetItem = hhPrevTargetItem;
++#endif
+         return false;
+     }
+ 
+@@ -5786,6 +5810,11 @@
+     *returnLoc = targetLoc;
+     restoreRNG;
+     rogue.cursorLoc = INVALID_POS;
++#ifdef BROGUE_HANDHELD
++    hhTargetingActive = hhPrevTargetingActive;
++    hhTargetingMode = hhPrevTargetingMode;
++    hhTargetItem = hhPrevTargetItem;
++#endif
+     return true;
+ }
+ 

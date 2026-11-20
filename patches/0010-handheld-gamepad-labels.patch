@@ -1,0 +1,251 @@
+--- a/src/brogue/IO.c
++++ b/src/brogue/IO.c
+@@ -460,27 +460,39 @@
+     buttonCount = 0;
+ 
+     if (rogue.playbackMode) {
++#ifdef BROGUE_HANDHELD
++        strcpy(buttons[buttonCount].text, " Unpause ");
++#else
+         if (KEYBOARD_LABELS) {
+             sprintf(buttons[buttonCount].text,  " Unpause (%sspace%s) ", goldTextEscape, whiteTextEscape);
+         } else {
+             strcpy(buttons[buttonCount].text,   "     Unpause     ");
+         }
++#endif
+         buttons[buttonCount].hotkey[0] = ACKNOWLEDGE_KEY;
+         buttonCount++;
+ 
++#ifdef BROGUE_HANDHELD
++        strcpy(buttons[buttonCount].text, " Omniscience ");
++#else
+         if (KEYBOARD_LABELS) {
+             sprintf(buttons[buttonCount].text,  "Omniscience (%stab%s)", goldTextEscape, whiteTextEscape);
+         } else {
+             strcpy(buttons[buttonCount].text,   "   Omniscience   ");
+         }
++#endif
+         buttons[buttonCount].hotkey[0] = TAB_KEY;
+         buttonCount++;
+ 
++#ifdef BROGUE_HANDHELD
++        strcpy(buttons[buttonCount].text, " Next Turn ");
++#else
+         if (KEYBOARD_LABELS) {
+             sprintf(buttons[buttonCount].text,  " Next Turn (%sl%s) ", goldTextEscape, whiteTextEscape);
+         } else {
+             strcpy(buttons[buttonCount].text,   "   Next Turn   ");
+         }
++#endif
+         buttons[buttonCount].hotkey[0] = RIGHT_KEY;
+         buttons[buttonCount].hotkey[1] = RIGHT_ARROW;
+         buttonCount++;
+@@ -488,32 +500,48 @@
+         strcpy(buttons[buttonCount].text,       "  Menu  ");
+         buttonCount++;
+     } else {
++#ifdef BROGUE_HANDHELD
++        strcpy(buttons[buttonCount].text, " Explore ");
++#else
+         sprintf(buttons[buttonCount].text,  "   E%sx%splore   ", goldTextEscape, whiteTextEscape);
++#endif
+         buttons[buttonCount].hotkey[0] = EXPLORE_KEY;
+         buttons[buttonCount].hotkey[1] = 'X';
+         buttonCount++;
+ 
++#ifdef BROGUE_HANDHELD
++        strcpy(buttons[buttonCount].text, " Rest ");
++#else
+         if (KEYBOARD_LABELS) {
+             sprintf(buttons[buttonCount].text,  "   Rest (%sz%s)   ", goldTextEscape, whiteTextEscape);
+         } else {
+             strcpy(buttons[buttonCount].text,   "     Rest     ");
+         }
++#endif
+         buttons[buttonCount].hotkey[0] = REST_KEY;
+         buttonCount++;
+ 
++#ifdef BROGUE_HANDHELD
++        strcpy(buttons[buttonCount].text, " Search (R2) ");
++#else
+         if (KEYBOARD_LABELS) {
+             sprintf(buttons[buttonCount].text,  "  Search (%ss%s)  ", goldTextEscape, whiteTextEscape);
+         } else {
+             strcpy(buttons[buttonCount].text,   "    Search    ");
+         }
++#endif
+         buttons[buttonCount].hotkey[0] = SEARCH_KEY;
+         buttonCount++;
+ 
+-        strcpy(buttons[buttonCount].text,       "    Menu    ");
++        strcpy(buttons[buttonCount].text,       " Menu (Start) ");
+         buttonCount++;
+     }
+ 
++#ifdef BROGUE_HANDHELD
++    strcpy(buttons[4].text, " Inventory (X) ");
++#else
+     sprintf(buttons[4].text,    "   %sI%snventory   ", goldTextEscape, whiteTextEscape);
++#endif
+     buttons[4].hotkey[0] = INVENTORY_KEY;
+     buttons[4].hotkey[1] = 'I';
+ 
+@@ -2958,7 +2986,13 @@
+     do {
+         nextBrogueEvent(&theEvent, false, false, false);
+         if (theEvent.eventType == KEYSTROKE && theEvent.param1 != ACKNOWLEDGE_KEY && theEvent.param1 != ESCAPE_KEY) {
+-            flashTemporaryAlert(" -- Press space or click to continue -- ", 500);
++            flashTemporaryAlert(
++#ifdef BROGUE_HANDHELD
++                HH_ALERT_CONTINUE
++#else
++                " -- Press space or click to continue -- "
++#endif
++                , 500);
+         }
+     } while (!(theEvent.eventType == KEYSTROKE && (theEvent.param1 == ACKNOWLEDGE_KEY || theEvent.param1 == ESCAPE_KEY)
+                || theEvent.eventType == MOUSE_UP));
+@@ -3379,7 +3413,13 @@
+                     exit = true;
+                     break;
+                 default:
+-                    flashTemporaryAlert(" -- Press space or click to continue -- ", 500);
++                    flashTemporaryAlert(
++#ifdef BROGUE_HANDHELD
++                HH_ALERT_CONTINUE
++#else
++                " -- Press space or click to continue -- "
++#endif
++                , 500);
+             }
+         }
+ 
+@@ -4107,6 +4147,30 @@
+ void printHelpScreen() {
+     short i, j;
+     char helpText[BROGUE_HELP_LINE_COUNT][DCOLS*3] = {
++#ifdef BROGUE_HANDHELD
++        "",
++        "",
++        "        -- Commands (RG35XX gamepad) --",
++        "",
++        "       D-pad  ****move / attack / aim",
++        "     A / B  ****confirm / cancel",
++        "          X  ****view inventory",
++        "          Y  ****cycle zoom (100 / 150 / 200%)",
++        "      Start  ****menu (save / save as / load / help / zoom / quit)",
++        "     Select  ****message history / next target",
++        "         R1  ****hold to run",
++        "         L2  ****wait one turn",
++        "         R2  ****search for secrets",
++        "",
++        "  Inspect (A in play):",
++        "       D-pad  ****move inspect cursor   A  ****finish",
++        "",
++        "     In text entry:",
++        "     D-pad  ****move key focus",
++        "     A / B  ****type / cancel    X  ****backspace    Y  ****shift",
++        "",
++        "        -- press A to continue --"
++#else
+         "",
+         "",
+         "          -- Commands --",
+@@ -4140,6 +4204,7 @@
+         "    <space/esc>  ****clear message or cancel command",
+         "",
+         "        -- press space or click to continue --"
++#endif
+     };
+ 
+     // Replace the "****"s with color escapes.
+@@ -5131,11 +5196,15 @@
+             b++;
+         }
+ 
++#ifndef BROGUE_HANDHELD
+         if (KEYBOARD_LABELS) {
+             sprintf(buttons[b].text, "  %sR%selabel  ", goldColorEscape, whiteColorEscape);
+             buttons[b].hotkey[0] = RELABEL_KEY;
+             b++;
+         }
++#endif
++        /* BROGUE_HANDHELD: Relabel is omitted — it reads a single character
++         * via nextKeyPress(true) and has no gamepad path. Display-only. */
+     }
+     // Add invisible previous and next buttons, so up and down arrows can page through items.
+     // Previous
+--- a/src/brogue/Rogue.h
++++ b/src/brogue/Rogue.h
+@@ -78,6 +78,16 @@
+ // set to false to disable references to keystrokes (e.g. for a tablet port)
+ #define KEYBOARD_LABELS true
+ 
++#ifdef BROGUE_HANDHELD
++/* Stage 5 gamepad labels: display-only text substitutions so the core's own
++ * UI describes gamepad controls instead of keyboard/mouse keys. All guards are
++ * compile-time; stock SDL/curses builds keep the original strings verbatim. */
++#define HH_CONTINUE_TEXT       "Press A to continue."
++#define HH_ALERT_CONTINUE      " -- Press A to continue -- "
++#define HH_EXPLORE_STOP_TEXT   "Exploring... press B to stop."
++#define HH_PLAY_STOP_TEXT      "Playing... press B to stop."
++#endif
++
+ //#define BROGUE_ASSERTS        // introduces several assert()s -- useful to find certain array overruns and other bugs
+ //#define AUDIT_RNG             // VERY slow, but sometimes necessary to debug out-of-sync recording errors
+ //#define GENERATE_FONT_FILES   // Displays font in grid upon startup, which can be screen-captured into font files for PC.
+--- a/src/brogue/MainMenu.c
++++ b/src/brogue/MainMenu.c
+@@ -1075,9 +1075,15 @@
+     color continueColor = black;
+     applyColorAverage(&continueColor, &goodMessageColor, 100);
+ 
++#ifdef BROGUE_HANDHELD
++    printString(HH_CONTINUE_TEXT,
++                (COLS - strLenWithoutEscapes(HH_CONTINUE_TEXT)) / 2,
++                ROWS - 1, &continueColor, &black, 0);
++#else
+     printString(KEYBOARD_LABELS ? "Press space or click to continue." : "Touch anywhere to continue.",
+                 (COLS - strLenWithoutEscapes(KEYBOARD_LABELS ? "Press space or click to continue." : "Touch anywhere to continue.")) / 2,
+                 ROWS - 1, &continueColor, &black, 0);
++#endif
+ 
+     commitDraws();
+ 
+--- a/src/brogue/Movement.c
++++ b/src/brogue/Movement.c
+@@ -1986,13 +1986,22 @@
+     }
+ 
+     if (!rogue.autoPlayingLevel) {
++#ifdef BROGUE_HANDHELD
++        message(HH_EXPLORE_STOP_TEXT, 0);
++#else
+         message(KEYBOARD_LABELS ? "Exploring... press any key to stop." : "Exploring... touch anywhere to stop.",
+                 0);
++#endif
+         // A little hack so the exploring message remains bright while exploring and then auto-dims when
+         // another message is displayed:
+         confirmMessages();
++#ifdef BROGUE_HANDHELD
++        printString(HH_EXPLORE_STOP_TEXT,
++                    mapToWindowX(0), mapToWindowY(-1), &white, &black, NULL);
++#else
+         printString(KEYBOARD_LABELS ? "Exploring... press any key to stop." : "Exploring... touch anywhere to stop.",
+                     mapToWindowX(0), mapToWindowY(-1), &white, &black, NULL);
++#endif
+     }
+     rogue.disturbed = false;
+     rogue.automationActive = true;
+@@ -2056,7 +2065,11 @@
+     rogue.autoPlayingLevel = true;
+ 
+     confirmMessages();
++#ifdef BROGUE_HANDHELD
++    message(HH_PLAY_STOP_TEXT, 0);
++#else
+     message(KEYBOARD_LABELS ? "Playing... press any key to stop." : "Playing... touch anywhere to stop.", 0);
++#endif
+ 
+     // explore until we are not making progress
+     do {

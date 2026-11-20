@@ -1,0 +1,144 @@
+--- a/src/brogue/GlobalsBase.h
++++ b/src/brogue/GlobalsBase.h
+@@ -64,6 +64,15 @@
+  * when no menu is open. Set by titleMenu() and buttonInputLoop(); read-only. */
+ extern buttonState *hhActiveMenuState;
+ #endif
++
++#ifdef BROGUE_HANDHELD
++/* Handheld UI inventory hook (Stage 3, M3.5). hhInventoryOpen is true for the
++ * whole interactive duration of displayInventory(); hhInventoryItem is the
++ * item the core currently has selected for its detail/action box, or NULL.
++ * Both are read-only from the platform layer and compiled out of stock builds. */
++extern boolean hhInventoryOpen;
++extern item *hhInventoryItem;
++#endif
+ extern int gameVariant;
+ extern creatureList *monsters;
+ extern creatureList *dormantMonsters;
+--- a/src/brogue/GlobalsBase.c
++++ b/src/brogue/GlobalsBase.c
+@@ -46,6 +46,11 @@
+ #ifdef BROGUE_HANDHELD
+ buttonState *hhActiveMenuState = NULL;
+ #endif
++
++#ifdef BROGUE_HANDHELD
++boolean hhInventoryOpen = false;
++item *hhInventoryItem = NULL;
++#endif
+ int gameVariant = VARIANT_BROGUE;
+ creatureList *monsters;
+ creatureList *dormantMonsters;
+--- a/src/brogue/Items.c
++++ b/src/brogue/Items.c
+@@ -2797,6 +2797,15 @@
+     badColorEscapeSequence[20];
+     char *magicEscapePtr;
+ 
++#ifdef BROGUE_HANDHELD
++    // Expose the selected inventory item to the handheld UI overlay (read-only).
++    // Save prior values so a nested displayInventory() call restores our state.
++    boolean hhPrevInventoryOpen = hhInventoryOpen;
++    item *hhPrevInventoryItem = hhInventoryItem;
++    hhInventoryOpen = false;
++    hhInventoryItem = NULL;
++#endif
++
+     assureCosmeticRNG;
+ 
+     clearCursorPath();
+@@ -2824,6 +2833,10 @@
+         confirmMessages();
+         message("Your pack is empty!", 0);
+         restoreRNG;
++#ifdef BROGUE_HANDHELD
++        hhInventoryOpen = hhPrevInventoryOpen;
++        hhInventoryItem = hhPrevInventoryItem;
++#endif
+         return 0;
+     }
+ 
+@@ -2951,6 +2964,10 @@
+         confirmMessages();
+         message("Nothing of that type!", 0);
+         restoreRNG;
++#ifdef BROGUE_HANDHELD
++        hhInventoryOpen = hhPrevInventoryOpen;
++        hhInventoryItem = hhPrevInventoryItem;
++#endif
+         return 0;
+     }
+     if (waitForAcknowledge) {
+@@ -3017,6 +3034,9 @@
+     const SavedDisplayBuffer rbuf = saveDisplayBuffer();
+     overlayDisplayBuffer(&dbuf);
+ 
++#ifdef BROGUE_HANDHELD
++    hhInventoryOpen = true;
++#endif
+     do {
+         repeatDisplay = false;
+ 
+@@ -3045,6 +3065,9 @@
+         if (highlightItemLine >= 0) {
+             theKey = itemList[highlightItemLine]->inventoryLetter;
+             theItem = itemList[highlightItemLine];
++#ifdef BROGUE_HANDHELD
++            hhInventoryItem = theItem;
++#endif
+         } else {
+             theKey = ESCAPE_KEY;
+         }
+@@ -3069,10 +3092,20 @@
+ 
+                     if (actionKey == -1) {
+                         repeatDisplay = true;
++#ifdef BROGUE_HANDHELD
++                        hhInventoryItem = NULL; // detail box closed; back to the list
++#endif
+                         overlayDisplayBuffer(&dbuf); // redisplay the inventory
+                     } else {
+                         restoreRNG;
+                         repeatDisplay = false;
++#ifdef BROGUE_HANDHELD
++                        // The detail box is closing and the chosen action may
++                        // consume/free theItem or run a whole turn that renders
++                        // the UI. Stop exposing it before the switch runs.
++                        hhInventoryOpen = hhPrevInventoryOpen;
++                        hhInventoryItem = hhPrevInventoryItem;
++#endif
+                         restoreDisplayBuffer(&rbuf); // restore the original screen
+                     }
+ 
+@@ -3117,9 +3150,19 @@
+                     if (actionKey == UP_KEY || actionKey == DOWN_KEY) {
+                         theKey = itemList[highlightItemLine]->inventoryLetter;
+                         theItem = itemList[highlightItemLine];
++#ifdef BROGUE_HANDHELD
++                        // Paging within the detail box: re-establish the hook
++                        // that was cleared when the action was chosen.
++                        hhInventoryOpen = true;
++                        hhInventoryItem = theItem;
++#endif
+                     } else if (actionKey > -1) {
+                         // Player took an action directly from the item screen; we're done here.
+                         restoreRNG;
++#ifdef BROGUE_HANDHELD
++                        hhInventoryOpen = hhPrevInventoryOpen;
++                        hhInventoryItem = hhPrevInventoryItem;
++#endif
+                         return 0;
+                     }
+                 }
+@@ -3130,6 +3173,10 @@
+     restoreDisplayBuffer(&rbuf); // restore the original screen
+ 
+     restoreRNG;
++#ifdef BROGUE_HANDHELD
++    hhInventoryOpen = hhPrevInventoryOpen;
++    hhInventoryItem = hhPrevInventoryItem;
++#endif
+     return theKey;
+ }
+ 

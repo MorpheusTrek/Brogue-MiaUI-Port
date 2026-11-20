@@ -1,0 +1,37 @@
+# --- SDK / downloaded toolchain (never commit) ---
+/sdk/
+sdk/
+.brogue-sdk/
+*.tar.gz
+*.tar.xz
+*.tgz
+
+# --- local configuration (never commit) ---
+.env
+.env.*
+!.env.example
+*.local
+local.mk
+
+# --- build artifacts ---
+/build/
+build/
+/vars/
+vars/
+*.o
+*.a
+*.so
+*.d
+
+# --- generated packages ---
+/dist/
+dist/
+*.pak/
+*.pak.tar.gz
+*.zip
+
+# --- editor / OS clutter ---
+.DS_Store
+Thumbs.db
+*.swp
+*~

@@ -1,0 +1,1484 @@
+--- a/src/brogue/GlobalsBase.h
++++ b/src/brogue/GlobalsBase.h
+@@ -98,6 +98,45 @@
+ extern short        hhTextInputMaxLength;
+ extern short        hhTextInputType;    /* enum textEntryTypes */
+ #endif
++
++#ifdef BROGUE_HANDHELD
++/* Stage 5 display camera: the platform layer owns the zoom level (0 = stock
++ * view) and cycles it from the Start menu; tiles.c reads it to choose a larger,
++ * freshly downscaled glyph atlas and a camera viewport over the map region.
++ * No game state, coordinates or RNG are affected. */
++extern int hhZoomLevel(void);
++/* True while a core full-screen overlay (help, message history) is displayed,
++ * so the camera can stay disabled there and leave those screens at 1:1 scale. */
++extern boolean hhModalScreenActive;
++/* Stage 6: which core full-screen text overlay is active (HH_CORE_SCREEN_*).
++ * tiles.c uses this to keep a scrollable 2x viewport instead of snapping back
++ * to 1:1. Display-only; no game state is affected. */
++extern int hhCoreScreen;
++/* Brogue-style Start menu, built with the core's own button renderer and
++ * drawn by tiles.c through the glyph atlas. Display-only. */
++extern screenDisplayBuffer hhMenuBuffer;
++extern short hhMenuX, hhMenuY, hhMenuW, hhMenuH;
++extern short hhMenuFocusRow;   /* core cell row of the highlighted menu button */
++extern boolean hhMenuActive;
++void hhDrawInGameMenuBuffer(void);
++/* Stage 5 UX: set by confirm() only for "Save this game and exit?" so the
++ * gamepad layer focuses Yes (button 0) instead of the safe No default. */
++extern boolean hhConfirmDefaultYes;
++/* True while confirm()'s yes/no printTextBox is active, so the handheld
++ * viewport scales the dialog instead of dropping the map to 1:1. */
++extern boolean hhConfirmActive;
++/* True only around modal overlays (inventory / detail dialogs) so blank
++ * overlay cells render as real blanks instead of revealing the map glyphs
++ * underneath, which otherwise read as a dark "shadow" behind the panel. */
++extern boolean hhOverlayOpaque;
++/* Stage 5 UX: screen-cell rectangle of the core's monster/item detail popup
++ * (as drawn by printTextBox). -1/-1/-1/-1 means none. Display-only: tiles.c
++ * uses it to render those exact cells at native 1:1 over the zoomed map. */
++extern short hhDetailBoxX, hhDetailBoxY, hhDetailBoxW, hhDetailBoxH;
++/* Display-only: popup contents are drawn here instead of into the main display
++ * buffer, so the zoomed map underneath is never modified. */
++extern screenDisplayBuffer hhDetailBuffer;
++#endif
+ extern int gameVariant;
+ extern creatureList *monsters;
+ extern creatureList *dormantMonsters;
+--- a/src/brogue/GlobalsBase.c
++++ b/src/brogue/GlobalsBase.c
+@@ -53,6 +53,27 @@
+ #endif
+ 
+ #ifdef BROGUE_HANDHELD
++boolean hhModalScreenActive = false;
++/* Stage 6: current core text screen (HH_CORE_SCREEN_*), display-only. */
++int hhCoreScreen = 0;
++/* Brogue-style Start menu display buffer (built in IO.c, drawn in tiles.c). */
++screenDisplayBuffer hhMenuBuffer;
++short hhMenuX = 0, hhMenuY = 0, hhMenuW = 0, hhMenuH = 0;
++short hhMenuFocusRow = -1;
++boolean hhMenuActive = false;
++/* Stage 5 UX: see GlobalsBase.h. Reset on every confirm() call. */
++boolean hhConfirmDefaultYes = false;
++boolean hhConfirmActive = false;
++/* When true, overlayDisplayBuffer() does not pull the underlying map glyph
++ * into blank overlay cells (which would show the dungeon as a dark "shadow"
++ * behind the zoomed inventory panel). Set only around modal overlays. */
++boolean hhOverlayOpaque = false;
++/* Display-only detail-popup rectangle; -1 means no popup is drawn. */
++short hhDetailBoxX = -1, hhDetailBoxY = -1, hhDetailBoxW = -1, hhDetailBoxH = -1;
++screenDisplayBuffer hhDetailBuffer;
++#endif
++
++#ifdef BROGUE_HANDHELD
+ boolean hhTargetingActive = false;
+ enum autoTargetMode hhTargetingMode = AUTOTARGET_MODE_NONE;
+ const item *hhTargetItem = NULL;
+--- a/src/brogue/Buttons.c
++++ b/src/brogue/Buttons.c
+@@ -351,7 +351,18 @@
+ 
+         const SavedDisplayBuffer rbuf = saveDisplayBuffer();
+         // Update the display.
++#ifdef BROGUE_HANDHELD
++        /* Zoomed inventory/detail/confirm panels: blank overlay cells must not
++         * inherit the map glyph underneath (it shows as a dark "shadow" behind
++         * the scaled panel). Gate on the modal hooks so 100% zoom and ordinary
++         * dialogs keep the stock semi-transparent behavior. */
++        boolean hhPrevOpaque = hhOverlayOpaque;
++        hhOverlayOpaque = hhInventoryOpen || hhConfirmActive;
++#endif
+         overlayDisplayBuffer(&dbuf);
++#ifdef BROGUE_HANDHELD
++        hhOverlayOpaque = hhPrevOpaque;
++#endif
+ 
+         // Get input.
+         nextBrogueEvent(&theEvent, true, false, false);
+--- a/src/brogue/IO.c
++++ b/src/brogue/IO.c
+@@ -27,6 +27,9 @@
+ #include "Rogue.h"
+ #include "GlobalsBase.h"
+ #include "Globals.h"
++#ifdef BROGUE_HANDHELD
++#include "handheld-input.h" /* hhCoreScreen / hhCoreScrollReset constants */
++#endif
+ 
+ #define D_DISABLE_BACKGROUND_COLORS     (WIZARD_MODE && 0)
+ 
+@@ -633,6 +636,11 @@
+ 
+         do {
+             textDisplayed = false;
++#ifdef BROGUE_HANDHELD
++            /* Display-only: drop the previous cursor's detail-popup rect before
++             * this iteration may draw a new one. */
++            hhDetailBoxX = hhDetailBoxY = hhDetailBoxW = hhDetailBoxH = -1;
++#endif
+ 
+             // Draw the cursor and path
+             if (isPosInMap(oldTargetLoc)) {
+@@ -764,6 +772,9 @@
+                 focusedOnTerrain = false;
+                 if (textDisplayed) {
+                     restoreDisplayBuffer(&rbuf); // Erase the monster info window.
++#ifdef BROGUE_HANDHELD
++                    hhDetailBoxX = hhDetailBoxY = hhDetailBoxW = hhDetailBoxH = -1;
++#endif
+                 }
+                 rogue.playbackMode = playingBack;
+                 refreshSideBar(-1, -1, false);
+@@ -786,6 +797,11 @@
+                 }
+         } while (!targetConfirmed && !canceled && !doEvent && !rogue.gameHasEnded);
+ 
++#ifdef BROGUE_HANDHELD
++        /* Leaving examine mode: no detail popup is visible any more. */
++        hhDetailBoxX = hhDetailBoxY = hhDetailBoxW = hhDetailBoxH = -1;
++#endif
++
+         if (isPosInMap(oldTargetLoc)) {
+             refreshDungeonCell(oldTargetLoc);                       // Remove old rogue.cursorLoc.
+         }
+@@ -1992,8 +2008,131 @@
+ }
+ void restoreDisplayBuffer(const SavedDisplayBuffer *savedBuf) {
+     displayBuffer = savedBuf->savedScreen;
++    /* NOTE: do not clear hhDetailBox* here. moveCursor() saves/restores the
++     * display around its temporary button overlay every frame, so this call
++     * also runs while the detail popup stays visible. The examine loop clears
++     * the rect explicitly at its own boundaries instead. */
+ }
+ 
++#ifdef BROGUE_HANDHELD
++/* Stage 6: device-specific text-screen canvas. Make the 80x24 page fully
++ * opaque so the underlying map and the stat sidebar never show through. */
++static void hhCoreCanvasOpaque(screenDisplayBuffer *dbuf) {
++    for (int x = HH_SCREEN_CANVAS_X0; x < HH_SCREEN_CANVAS_COLS; x++) {
++        for (int y = 0; y < HH_SCREEN_CANVAS_ROWS; y++) {
++            dbuf->cells[x][y].opacity = HH_SCREEN_OPAQUE;
++        }
++    }
++}
++#endif
++
++#ifdef BROGUE_HANDHELD
++/* Start menu in Brogue's own visual vocabulary: the core button renderer
++ * supplies the tile font, soft gradient shading, gold hotkeys, the browned
++ * hover row and the [] value markers. Display-only: no gameplay/RNG state is
++ * changed here (drawButton isolates cosmetic RNG itself). */
++static brogueButton hhMenuButtons[HH_IGM_COUNT + 2];
++static buttonState  hhMenuState;
++static short        hhMenuButtonFor[HH_IGM_COUNT];
++
++void hhDrawInGameMenuBuffer(void) {
++    short n = 0, focus;
++    char darkEsc[5] = "";
++    char marker[2] = " ";
++    const char *gword = "text";
++
++    if (!hhInGameMenuOpenState()) {
++        hhMenuActive = false;
++        return;
++    }
++
++    clearDisplayBuffer(&hhMenuBuffer);
++    rectangularShading(HH_MENU_PANEL_X, HH_MENU_PANEL_Y,
++                       HH_MENU_PANEL_W, HH_MENU_PANEL_H,
++                       &interfaceBoxColor, INTERFACE_OPACITY, &hhMenuBuffer);
++    /* No keyboard hotkey prefixes: this menu is gamepad-driven (A changes,
++     * Up/Down navigate), so showing S/?/\/G/Z/R/Q shortcuts is misleading. */
++    encodeMessageColor(darkEsc, 0, &black);
++
++    printString(" -- Menu -- ", HH_MENU_PANEL_X + 2, HH_MENU_PANEL_Y + 1,
++                &itemMessageColor, &interfaceBoxColor, &hhMenuBuffer);
++
++#define HH_ADD_BTN(idx, ...) do {                                          \
++        initializeButton(&hhMenuButtons[n]);                               \
++        hhMenuButtons[n].buttonColor = interfaceBoxColor;                  \
++        hhMenuButtons[n].opacity = INTERFACE_OPACITY;                       \
++        hhMenuButtons[n].x = HH_MENU_PANEL_X + 2;                           \
++        hhMenuButtons[n].y = HH_MENU_PANEL_Y + 3 + n;                       \
++        snprintf(hhMenuButtons[n].text, BUTTON_TEXT_SIZE, __VA_ARGS__);     \
++        hhMenuButtonFor[idx] = (short) n;                                  \
++        n++;                                                               \
++    } while (0)
++
++    HH_ADD_BTN(HH_IGM_SAVE_EXIT, "  Save & exit  ");
++    HH_ADD_BTN(HH_IGM_HELP,      "  Help  ");
++
++    /* Separator, exactly as Brogue draws it. */
++    initializeButton(&hhMenuButtons[n]);
++    hhMenuButtons[n].buttonColor = interfaceBoxColor;
++    hhMenuButtons[n].opacity = INTERFACE_OPACITY;
++    hhMenuButtons[n].x = HH_MENU_PANEL_X + 2;
++    hhMenuButtons[n].y = HH_MENU_PANEL_Y + 3 + n;
++    snprintf(hhMenuButtons[n].text, BUTTON_TEXT_SIZE, "    %s---", darkEsc);
++    hhMenuButtons[n].flags &= ~B_ENABLED;
++    n++;
++
++    HH_ADD_BTN(HH_IGM_COLORS, "  [%s] Hide color effects  ",
++               rogue.trueColorMode ? "X" : " ");
++    HH_ADD_BTN(HH_IGM_STEALTH, "  [%s] Display stealth range  ",
++               rogue.displayStealthRangeMode ? "X" : " ");
++    switch (graphicsMode) {
++        case TILES_GRAPHICS:  marker[0] = 'x'; gword = "tiled";  break;
++        case HYBRID_GRAPHICS: marker[0] = '~'; gword = "hybrid"; break;
++        case TEXT_GRAPHICS:
++        default:              marker[0] = ' '; gword = "text";   break;
++    }
++    HH_ADD_BTN(HH_IGM_GRAPHICS, "  [%s] Graphics: %s  ", marker, gword);
++    HH_ADD_BTN(HH_IGM_ZOOM, "  [%s] Zoom %s  ",
++               hhZoomLevel() ? "X" : " ", hhZoomLabel());
++
++    /* Second separator before the exit actions. */
++    initializeButton(&hhMenuButtons[n]);
++    hhMenuButtons[n].buttonColor = interfaceBoxColor;
++    hhMenuButtons[n].opacity = INTERFACE_OPACITY;
++    hhMenuButtons[n].x = HH_MENU_PANEL_X + 2;
++    hhMenuButtons[n].y = HH_MENU_PANEL_Y + 3 + n;
++    snprintf(hhMenuButtons[n].text, BUTTON_TEXT_SIZE, "    %s---", darkEsc);
++    hhMenuButtons[n].flags &= ~B_ENABLED;
++    n++;
++
++    HH_ADD_BTN(HH_IGM_RETURN, "  Return to game  ");
++    HH_ADD_BTN(HH_IGM_QUIT,   "  Quit  ");
++#undef HH_ADD_BTN
++
++    printString(" Up/Down Select  A Change/Confirm  B Back ",
++                HH_MENU_PANEL_X + 1, HH_MENU_PANEL_Y + HH_MENU_PANEL_H - 1,
++                &itemMessageColor, &interfaceBoxColor, &hhMenuBuffer);
++
++    initializeButtonState(&hhMenuState, hhMenuButtons, n,
++                          HH_MENU_PANEL_X, HH_MENU_PANEL_Y + 2,
++                          HH_MENU_PANEL_W, n);
++    focus = hhInGameMenuFocus();
++    hhMenuState.buttonFocused = (focus >= 0 && focus < HH_IGM_COUNT)
++                                ? hhMenuButtonFor[focus] : -1;
++    hhMenuState.buttonDepressed = -1;
++    drawButtonsInState(&hhMenuState, &hhMenuBuffer);
++    hhMenuFocusRow = (hhMenuState.buttonFocused >= 0
++                      && hhMenuState.buttonFocused < n)
++                     ? hhMenuState.buttons[hhMenuState.buttonFocused].y : -1;
++
++    hhMenuX = HH_MENU_PANEL_X;
++    hhMenuY = HH_MENU_PANEL_Y;
++    hhMenuW = HH_MENU_PANEL_W;
++    hhMenuH = HH_MENU_PANEL_H;
++    hhMenuActive = true;
++}
++#endif
++
+ // draws overBuf over the current display with per-cell pseudotransparency as specified in overBuf.
+ void overlayDisplayBuffer(const screenDisplayBuffer *overBuf) {
+     for (int i=0; i<COLS; i++) {
+@@ -2005,9 +2144,21 @@
+ 
+                 // character and fore color:
+                 if (overBuf->cells[i][j].character == ' ') { // Blank cells in the overbuf take the character from the screen.
+-                    character = displayBuffer.cells[i][j].character;
+-                    foreColor = colorFromComponents(displayBuffer.cells[i][j].foreColorComponents);
+-                    applyColorAverage(&foreColor, &backColor, overBuf->cells[i][j].opacity);
++#ifdef BROGUE_HANDHELD
++                    if (hhOverlayOpaque) {
++                        /* Zoomed modal panel: do NOT inherit the map glyph.
++                         * The stock behavior darkens the underlying dungeon
++                         * character, which reads as a map "shadow" behind the
++                         * inventory. A real space keeps the panel clean. */
++                        character = ' ';
++                        foreColor = backColor;
++                    } else
++#endif
++                    {
++                        character = displayBuffer.cells[i][j].character;
++                        foreColor = colorFromComponents(displayBuffer.cells[i][j].foreColorComponents);
++                        applyColorAverage(&foreColor, &backColor, overBuf->cells[i][j].opacity);
++                    }
+                 } else {
+                     character = overBuf->cells[i][j].character;
+                     foreColor = colorFromComponents(overBuf->cells[i][j].foreColorComponents);
+@@ -2978,6 +3129,11 @@
+ 
+ void waitForAcknowledgment() {
+     rogueEvent theEvent;
++#ifdef BROGUE_HANDHELD
++    /* The handheld UI tells the player "Press A to continue"; A maps to
++     * RETURN_KEY, so accept it alongside the core's Space/Escape. */
++    boolean hhContinueKey;
++#endif
+ 
+     if (rogue.autoPlayingLevel || (rogue.playbackMode && !rogue.playbackOOS) || nonInteractivePlayback) {
+         return;
+@@ -2985,7 +3141,15 @@
+ 
+     do {
+         nextBrogueEvent(&theEvent, false, false, false);
++#ifdef BROGUE_HANDHELD
++        hhContinueKey = (theEvent.eventType == KEYSTROKE
++                         && (theEvent.param1 == ACKNOWLEDGE_KEY
++                             || theEvent.param1 == ESCAPE_KEY
++                             || theEvent.param1 == RETURN_KEY));
++        if (!hhContinueKey && theEvent.eventType != MOUSE_UP) {
++#else
+         if (theEvent.eventType == KEYSTROKE && theEvent.param1 != ACKNOWLEDGE_KEY && theEvent.param1 != ESCAPE_KEY) {
++#endif
+             flashTemporaryAlert(
+ #ifdef BROGUE_HANDHELD
+                 HH_ALERT_CONTINUE
+@@ -2994,8 +3158,12 @@
+ #endif
+                 , 500);
+         }
++#ifdef BROGUE_HANDHELD
++    } while (!hhContinueKey && theEvent.eventType != MOUSE_UP);
++#else
+     } while (!(theEvent.eventType == KEYSTROKE && (theEvent.param1 == ACKNOWLEDGE_KEY || theEvent.param1 == ESCAPE_KEY)
+                || theEvent.eventType == MOUSE_UP));
++#endif
+ }
+ 
+ void waitForKeystrokeOrMouseClick() {
+@@ -3016,6 +3184,12 @@
+         return true; // oh yes he did
+     }
+ 
++#ifdef BROGUE_HANDHELD
++    /* Stage 5 UX: only the save-and-exit prompt defaults to Yes so A can exit
++     * in one press; every other confirmation keeps the safe "No" focus. */
++    hhConfirmDefaultYes = (strcmp(prompt, "Save this game and exit?") == 0);
++#endif
++
+     encodeMessageColor(whiteColorEscape, 0, &white);
+     encodeMessageColor(yellowColorEscape, 0, KEYBOARD_LABELS ? &yellow : &white);
+ 
+@@ -3035,7 +3209,15 @@
+     buttons[1].flags |= (B_WIDE_CLICK_AREA | B_KEYPRESS_HIGHLIGHT);
+ 
+     const SavedDisplayBuffer rbuf = saveDisplayBuffer();
++#ifdef BROGUE_HANDHELD
++    hhConfirmActive = true;
++    hhOverlayOpaque = true;
++#endif
+     retVal = printTextBox(prompt, COLS/3, ROWS/3, COLS/3, &white, &interfaceBoxColor, buttons, 2);
++#ifdef BROGUE_HANDHELD
++    hhConfirmActive = false;
++    hhOverlayOpaque = false;
++#endif
+     restoreDisplayBuffer(&rbuf);
+ 
+     if (retVal == -1 || retVal == 1) { // If they canceled or pressed no.
+@@ -3303,6 +3485,32 @@
+ 
+     clearDisplayBuffer(&dbuf);
+ 
++#ifdef BROGUE_HANDHELD
++    /* Stage 6 device archive: header, 22 message rows and a close hint on the
++     * 80x24 canvas. The map/sidebar are fully covered; D-pad Up/Down pages
++     * through older/newer messages via the core. */
++    {
++        char buf[HH_SCREEN_TEXT_W + 1];
++        snprintf(buf, sizeof(buf), " MESSAGE HISTORY   (older < D-pad > newer)");
++        printString(buf, HH_SCREEN_TEXT_X0, 0, &flavorTextColor, &black, &dbuf);
++        for (i = 0; (MESSAGE_ARCHIVE_LINES - offset + i) < MESSAGE_ARCHIVE_LINES
++                    && i < 22 && i < height; i++) {
++            printString(messages[MESSAGE_ARCHIVE_LINES - offset + i],
++                        HH_SCREEN_TEXT_X0, i + 1, &white, &black, &dbuf);
++            fadePercent = 50 * (length - offset + i) / length + 50;
++            for (j = 0; j < HH_SCREEN_TEXT_W; j++) {
++                if (dbuf.cells[j][i + 1].character != ' ') {
++                    for (k=0; k<3; k++) {
++                        dbuf.cells[j][i + 1].foreColorComponents[k] =
++                            dbuf.cells[j][i + 1].foreColorComponents[k] * fadePercent / 100;
++                    }
++                }
++            }
++        }
++        printString(" A / B: close", HH_SCREEN_TEXT_X0, 23, &itemMessageColor, &black, &dbuf);
++        hhCoreCanvasOpaque(&dbuf);
++    }
++#else
+     for (i = 0; (MESSAGE_ARCHIVE_LINES - offset + i) < MESSAGE_ARCHIVE_LINES && i < ROWS && i < height; i++) {
+         printString(messages[MESSAGE_ARCHIVE_LINES - offset + i], mapToWindowX(0), i, &white, &black, &dbuf);
+ 
+@@ -3317,7 +3525,7 @@
+             }
+         }
+     }
+-
++#endif
+ 
+     overlayDisplayBuffer(&dbuf);
+ }
+@@ -3394,7 +3602,11 @@
+                     } else if (theEvent.shiftKey) {
+                         offset++;
+                     } else {
++#ifdef BROGUE_HANDHELD
++                        offset += 11;   /* one device page */
++#else
+                         offset += MESSAGE_ARCHIVE_VIEW_LINES / 3;
++#endif
+                     }
+                     break;
+                 case DOWN_KEY:
+@@ -3405,11 +3617,18 @@
+                     } else if (theEvent.shiftKey) {
+                         offset--;
+                     } else {
++#ifdef BROGUE_HANDHELD
++                        offset -= 11;   /* one device page */
++#else
+                         offset -= MESSAGE_ARCHIVE_VIEW_LINES / 3;
++#endif
+                     }
+                     break;
+                 case ACKNOWLEDGE_KEY:
+                 case ESCAPE_KEY:
++#ifdef BROGUE_HANDHELD
++                case RETURN_KEY:   /* A = "Press A to continue" on handheld */
++#endif
+                     exit = true;
+                     break;
+                 default:
+@@ -3444,14 +3663,30 @@
+         return;
+     }
+ 
++#ifdef BROGUE_HANDHELD
++    height = min(length, 22);   /* device canvas: 24 rows minus header/footer */
++#else
+     height = min(length, MESSAGE_ARCHIVE_VIEW_LINES);
++#endif
+     offset = height;
+ 
+-
++#ifdef BROGUE_HANDHELD
++    hhModalScreenActive = true;
++    hhCoreScreen = HH_CORE_SCREEN_ARCHIVE;
++    hhCoreScrollReset(HH_CORE_SCREEN_ARCHIVE);
++    /* Skip the pull-down animation: it needs several timed frames and would
++     * redraw the whole 2x canvas repeatedly. */
++    offset = scrollMessageArchive(messageBuffer, length, offset, height);
++#else
+     animateMessageArchive(true, messageBuffer, length, offset, height);
+     offset = scrollMessageArchive(messageBuffer, length, offset, height);
+     animateMessageArchive(false, messageBuffer, length, offset, height);
++#endif
+ 
++#ifdef BROGUE_HANDHELD
++    hhModalScreenActive = false;
++    hhCoreScreen = HH_CORE_SCREEN_NONE;
++#endif
+     updateFlavorText();
+     confirmMessages();
+     updateMessageDisplay();
+@@ -4142,7 +4377,11 @@
+     return theEvent.param1;
+ }
+ 
++#ifdef BROGUE_HANDHELD
++#define BROGUE_HELP_LINE_COUNT  24   /* device canvas: 80x24, no blank rows */
++#else
+ #define BROGUE_HELP_LINE_COUNT  33
++#endif
+ 
+ void printHelpScreen() {
+     short i, j;
+@@ -4155,10 +4394,11 @@
+         "       D-pad  ****move / attack / aim",
+         "     A / B  ****confirm / cancel",
+         "          X  ****view inventory",
+-        "          Y  ****cycle zoom (100 / 150 / 200%)",
+-        "      Start  ****menu (save / save as / load / help / zoom / quit)",
++        "          Y  ****cycle zoom (100 / 200 / 300%)",
++        "      Start  ****in-game menu",
+         "     Select  ****message history / next target",
+-        "         R1  ****hold to run",
++        "         L1  ****hold to run",
++        "         R1  ****hold + D-pad for diagonals",
+         "         L2  ****wait one turn",
+         "         R2  ****search for secrets",
+         "",
+@@ -4226,12 +4466,23 @@
+         }
+     }
+ 
++#ifdef BROGUE_HANDHELD
++    hhModalScreenActive = true;
++    hhCoreScreen = HH_CORE_SCREEN_HELP;
++    hhCoreScrollReset(HH_CORE_SCREEN_HELP);
++#endif
+     const SavedDisplayBuffer rbuf = saveDisplayBuffer();
+ 
+     screenDisplayBuffer dbuf;
+     clearDisplayBuffer(&dbuf);
+ 
+     // Print the text to the dbuf.
++#ifdef BROGUE_HANDHELD
++    for (i=0; i<BROGUE_HELP_LINE_COUNT; i++) {
++        printString(helpText[i], HH_SCREEN_TEXT_X0, i, &itemMessageColor, &black, &dbuf);
++    }
++    hhCoreCanvasOpaque(&dbuf);
++#else
+     for (i=0; i<BROGUE_HELP_LINE_COUNT && i < ROWS; i++) {
+         printString(helpText[i], mapToWindowX(1), i, &itemMessageColor, &black, &dbuf);
+     }
+@@ -4243,11 +4494,16 @@
+             dbuf.cells[mapToWindowX(i)][j].opacity = INTERFACE_OPACITY;
+         }
+     }
++#endif
+ 
+     // Display.
+     overlayDisplayBuffer(&dbuf);
+     waitForAcknowledgment();
+     restoreDisplayBuffer(&rbuf);
++#ifdef BROGUE_HANDHELD
++    hhModalScreenActive = false;
++    hhCoreScreen = HH_CORE_SCREEN_NONE;
++#endif
+     updateFlavorText();
+     updateMessageDisplay();
+ }
+@@ -4310,9 +4566,43 @@
+     screenDisplayBuffer dbuf;
+     clearDisplayBuffer(&dbuf);
+ 
+-    // Title
+     char buf[COLS*2] = "-- FEATS --";
+     short y = 1;
++#ifdef BROGUE_HANDHELD
++    /* Stage 6 device layout: legend and progress at the TOP, feats in two
++     * compact columns, close hint at the bottom. No sidebar, no empty rows. */
++    {
++        char states[64] = {0};
++        char escapes[64][5] = {{0}};
++        int achieved = 0, i;
++        for (i = 0; i < gameConst->numberFeats && i < 64; i++) {
++            if (rogue.featRecord[i] == featTable[i].initialValue) {
++                strcpy(escapes[i], availableColorEscape); states[i] = ' ';
++            } else if (rogue.featRecord[i]) {
++                strcpy(escapes[i], achievedColorEscape); states[i] = '+'; achieved++;
++            } else {
++                strcpy(escapes[i], failedColorEscape); states[i] = '-';
++            }
++        }
++        snprintf(buf, sizeof(buf), "-- FEATS --   %d/%d achieved", achieved, gameConst->numberFeats);
++        printString(buf, HH_SCREEN_TEXT_X0, 0, &flavorTextColor, &black, &dbuf);
++        snprintf(buf, sizeof(buf), "%s+ achieved   %s- failed    ( ) available",
++                 achievedColorEscape, failedColorEscape);
++        printString(buf, HH_SCREEN_TEXT_X0, 1, &white, &black, &dbuf);
++        memset(buf, '-', HH_SCREEN_TEXT_W); buf[HH_SCREEN_TEXT_W] = '\0';
++        printString(buf, HH_SCREEN_TEXT_X0, 2, &gray, &black, &dbuf);
++        for (i = 0; i < gameConst->numberFeats && i < 64; i++) {
++            int gx = (i < 5) ? HH_SCREEN_TEXT_X0 : HH_SCREEN_TEXT_X0 + 40;
++            int gy = 3 + (i % 5) * 4;
++            snprintf(buf, sizeof(buf), "%s%c %s", escapes[i], states[i], featTable[i].name);
++            printString(buf, gx, gy, &itemMessageColor, &black, &dbuf);
++            (void) printStringWithWrapping(featTable[i].description, gx + 2, gy + 1,
++                                           36, &gray, &black, &dbuf);
++        }
++        printString("-- A / B: close --", HH_SCREEN_TEXT_X0, 23, &itemMessageColor, &black, &dbuf);
++    }
++    hhCoreCanvasOpaque(&dbuf);
++#else
+     printString(buf, mapToWindowX((DCOLS - FEAT_NAME_LENGTH - strLenWithoutEscapes(buf)) / 2), y, &flavorTextColor, &black, &dbuf);
+ 
+     // List of feats, color-coded by status
+@@ -4347,10 +4637,18 @@
+             dbuf.cells[i][j].opacity = (i < STAT_BAR_WIDTH ? 0 : INTERFACE_OPACITY);
+         }
+     }
++#endif
+     const SavedDisplayBuffer rbuf = saveDisplayBuffer();
++#ifdef BROGUE_HANDHELD
++    hhCoreScreen = HH_CORE_SCREEN_FEATS;
++    hhCoreScrollReset(HH_CORE_SCREEN_FEATS);
++#endif
+     overlayDisplayBuffer(&dbuf);
+     waitForKeystrokeOrMouseClick();
+     restoreDisplayBuffer(&rbuf);
++#ifdef BROGUE_HANDHELD
++    hhCoreScreen = HH_CORE_SCREEN_NONE;
++#endif
+ }
+ 
+ void printDiscoveriesScreen() {
+@@ -4361,6 +4659,29 @@
+ 
+     clearDisplayBuffer(&dbuf);
+ 
++#ifdef BROGUE_HANDHELD
++    /* Stage 6 device layout: three compact columns on the 80x24 canvas.
++     * Every category fits without horizontal scrolling and no sidebar shows. */
++    printString("-- SCROLLS --", HH_SCREEN_TEXT_X0, 0, &flavorTextColor, &black, &dbuf);
++    printDiscoveries(SCROLL, gameConst->numberScrollKinds, G_SCROLL,
++                     HH_SCREEN_TEXT_X0, 1, &dbuf);
++    printString("-- RINGS --", HH_SCREEN_TEXT_X0,
++                1 + gameConst->numberScrollKinds, &flavorTextColor, &black, &dbuf);
++    printDiscoveries(RING, NUMBER_RING_KINDS, G_RING,
++                     HH_SCREEN_TEXT_X0, 2 + gameConst->numberScrollKinds, &dbuf);
++
++    printString("-- POTIONS --", 27, 0, &flavorTextColor, &black, &dbuf);
++    printDiscoveries(POTION, gameConst->numberPotionKinds, G_POTION, 27, 1, &dbuf);
++
++    printString("-- STAFFS --", 53, 0, &flavorTextColor, &black, &dbuf);
++    printDiscoveries(STAFF, NUMBER_STAFF_KINDS, G_STAFF, 53, 1, &dbuf);
++    printString("-- WANDS --", 53, 2 + NUMBER_STAFF_KINDS, &flavorTextColor, &black, &dbuf);
++    printDiscoveries(WAND, gameConst->numberWandKinds, G_WAND,
++                     53, 3 + NUMBER_STAFF_KINDS, &dbuf);
++
++    printString("-- A / B: close --", 27, 23, &itemMessageColor, &black, &dbuf);
++    hhCoreCanvasOpaque(&dbuf);
++#else
+     printString("-- SCROLLS --", mapToWindowX(2), y = mapToWindowY(1), &flavorTextColor, &black, &dbuf);
+     printDiscoveries(SCROLL, gameConst->numberScrollKinds, G_SCROLL, mapToWindowX(3), ++y, &dbuf);
+ 
+@@ -4384,11 +4705,19 @@
+             dbuf.cells[i][j].opacity = (i < STAT_BAR_WIDTH ? 0 : INTERFACE_OPACITY);
+         }
+     }
++#endif
++#ifdef BROGUE_HANDHELD
++    hhCoreScreen = HH_CORE_SCREEN_DISCOVERIES;
++    hhCoreScrollReset(HH_CORE_SCREEN_DISCOVERIES);
++#endif
+     overlayDisplayBuffer(&dbuf);
+ 
+     waitForKeystrokeOrMouseClick();
+ 
+     restoreDisplayBuffer(&rbuf);
++#ifdef BROGUE_HANDHELD
++    hhCoreScreen = HH_CORE_SCREEN_NONE;
++#endif
+ }
+ 
+ void printHighScores(boolean hiliteMostRecent) {
+@@ -5081,6 +5410,11 @@
+                    const color *foreColor, const color *backColor,
+                    brogueButton *buttons, short buttonCount) {
+     short x2, y2, lineCount, i, bx, by, padLines;
++#ifdef BROGUE_HANDHELD
++    /* Capture at entry: width below is re-computed to a positive value in the
++     * auto-placement branch, so testing it later would always fail. */
++    short autoDetailBox = (width <= 0 && buttonCount == 0);
++#endif
+ 
+     if (width <= 0) {
+         // autocalculate y and width
+@@ -5097,6 +5431,13 @@
+             x2 -= (MIN_DEFAULT_INFO_PANEL_WIDTH - width) / 2;
+             width = MIN_DEFAULT_INFO_PANEL_WIDTH;
+         }
++#ifdef BROGUE_HANDHELD
++        if (autoDetailBox) {
++            /* Wide, short popup: wrap onto fewer lines so the whole description
++             * fits in a band at the top of the map instead of a tall column. */
++            width = DCOLS - 8;
++        }
++#endif
+     } else {
+         y2 = y;
+         x2 = x;
+@@ -5135,11 +5476,47 @@
+         padLines = 0;
+     }
+ 
++#ifdef BROGUE_HANDHELD
++    /* Stage 5 UX (display-only): the two auto-placed, button-less popups are
++     * printMonsterDetails()/printFloorItemDetails() from the examine/target
++     * loop. Put the wide, short box at the top-center of the map region (clear
++     * of the cursor, always inside the view) and record the exact drawn rect.
++     * Snapshot the map tiles first: tiles.c redraws the intact zoomed map from
++     * that copy, then paints these cells natively on top. No game state, grid
++     * size, coordinates for logic, or RNG is affected; stock/curses builds
++     * never compile this block. */
++    if (autoDetailBox) {
++        short boxHeight = lineCount + padLines;
++        x2 = (short) (mapToWindowX(0) + (DCOLS - width) / 2);
++        y2 = MESSAGE_LINES + 1;
++        if (x2 + width > COLS) x2 = COLS - width;
++        if (x2 < mapToWindowX(0)) x2 = mapToWindowX(0);
++        if (y2 + boxHeight > MESSAGE_LINES + DROWS) {
++            y2 = MESSAGE_LINES + DROWS - boxHeight;
++        }
++        if (y2 < MESSAGE_LINES) y2 = MESSAGE_LINES;
++        hhDetailBoxX = x2;
++        hhDetailBoxY = y2;
++        hhDetailBoxW = width;
++        hhDetailBoxH = boxHeight;
++    }
++#endif
++
+     screenDisplayBuffer dbuf;
+     clearDisplayBuffer(&dbuf);
+     printStringWithWrapping(textBuf, x2, y2, width, foreColor, backColor, &dbuf);
+     rectangularShading(x2, y2, width, lineCount + padLines, backColor, INTERFACE_OPACITY, &dbuf);
+-    overlayDisplayBuffer(&dbuf);
++#ifdef BROGUE_HANDHELD
++    if (autoDetailBox) {
++        /* Keep the popup out of the main display buffer: the platform renderer
++         * draws it natively from this copy, leaving the zoomed map untouched. */
++        clearDisplayBuffer(&hhDetailBuffer);
++        copyDisplayBuffer(&hhDetailBuffer, &dbuf);
++    } else
++#endif
++    {
++        overlayDisplayBuffer(&dbuf);
++    }
+ 
+     if (buttonCount > 0) {
+         return buttonInputLoop(buttons, buttonCount, x2, y2, width, by - y2 + 1 + padLines, NULL);
+--- a/src/brogue/Items.c
++++ b/src/brogue/Items.c
+@@ -25,6 +25,9 @@
+ #include "Rogue.h"
+ #include "GlobalsBase.h"
+ #include "Globals.h"
++#ifdef BROGUE_HANDHELD
++#include "handheld-input.h"
++#endif
+ 
+ #define MAGIC_POLARITY_BENEVOLENT 1
+ #define MAGIC_POLARITY_MALEVOLENT -1
+@@ -2802,6 +2805,7 @@
+     // Save prior values so a nested displayInventory() call restores our state.
+     boolean hhPrevInventoryOpen = hhInventoryOpen;
+     item *hhPrevInventoryItem = hhInventoryItem;
++    boolean hhPrevOverlayOpaque = hhOverlayOpaque;
+     hhInventoryOpen = false;
+     hhInventoryItem = NULL;
+ #endif
+@@ -3032,9 +3036,12 @@
+     buttons[itemNumber + extraLineCount + 1].hotkey[1] = DOWN_ARROW;
+ 
+     const SavedDisplayBuffer rbuf = saveDisplayBuffer();
++#ifdef BROGUE_HANDHELD
++    hhOverlayOpaque = true;
++#endif
+     overlayDisplayBuffer(&dbuf);
+-
+ #ifdef BROGUE_HANDHELD
++    hhOverlayOpaque = hhPrevOverlayOpaque;
+     hhInventoryOpen = true;
+ #endif
+     do {
+@@ -3078,7 +3085,13 @@
+             do {
+                 // Yes. Highlight the selected item. Do this by changing the button color and re-displaying it.
+ 
++#ifdef BROGUE_HANDHELD
++                hhOverlayOpaque = true;
++#endif
+                 overlayDisplayBuffer(&dbuf);
++#ifdef BROGUE_HANDHELD
++                hhOverlayOpaque = hhPrevOverlayOpaque;
++#endif
+ 
+                 //buttons[highlightItemLine].buttonColor = interfaceBoxColor;
+                 drawButton(&(buttons[highlightItemLine]), BUTTON_PRESSED, NULL);
+@@ -3086,7 +3099,20 @@
+ 
+                 if (theEvent.shiftKey || theEvent.controlKey || waitForAcknowledge) {
+                     // Display an information window about the item.
++#ifdef BROGUE_HANDHELD
++                    /* At 200% zoom the detail box is widened so its description
++                     * wraps into fewer rows; the zoom viewport then scales the
++                     * whole box uniformly to fill the screen. At 100% the stock
++                     * 40-column box is unchanged. */
++                    {
++                        short boxW = (hhZoomLevel() > 0) ? 56 : 40;
++                        actionKey = printCarriedItemDetails(theItem,
++                            max(2, mapToWindowX(DCOLS - maxLength - boxW - 2)),
++                            mapToWindowY(2), boxW, includeButtons);
++                    }
++#else
+                     actionKey = printCarriedItemDetails(theItem, max(2, mapToWindowX(DCOLS - maxLength - 42)), mapToWindowY(2), 40, includeButtons);
++#endif
+ 
+                     restoreDisplayBuffer(&rbuf); // remove the item info window
+ 
+@@ -3095,7 +3121,13 @@
+ #ifdef BROGUE_HANDHELD
+                         hhInventoryItem = NULL; // detail box closed; back to the list
+ #endif
++#ifdef BROGUE_HANDHELD
++                        hhOverlayOpaque = true;
++#endif
+                         overlayDisplayBuffer(&dbuf); // redisplay the inventory
++#ifdef BROGUE_HANDHELD
++                        hhOverlayOpaque = hhPrevOverlayOpaque;
++#endif
+                     } else {
+                         restoreRNG;
+                         repeatDisplay = false;
+--- a/src/platform/tiles.c
++++ b/src/platform/tiles.c
+@@ -1,11 +1,14 @@
+ #include <math.h>
+ #include <stdlib.h>
++#include <string.h>
+ #include <SDL_image.h>
+ #include "platform.h"
+ #include "tiles.h"
+ 
+ #ifdef BROGUE_HANDHELD
+ #include "handheld-ui.h"
++#include "handheld-input.h" /* hhInGameMenuOpenState() */
++#include "GlobalsBase.h"   /* player; hhZoomLevel() hook for the display camera */
+ #endif
+ 
+ #define PI  3.14159265358979323846
+@@ -61,6 +64,45 @@
+ static int baseTileWidth = -1;      // width (px) of tiles in the smallest texture (`Textures[0]`)
+ static int baseTileHeight = -1;     // height (px) of tiles in the smallest texture (`Textures[0]`)
+ 
++#ifdef BROGUE_HANDHELD
++/* Stage 5 display camera: a second, larger glyph atlas plus a viewport over
++ * the map region. The core grid (COLS/ROWS/DCOLS/DROWS), RNG and all game state
++ * are untouched; this only changes how the existing screenTiles buffer is
++ * composited onto the renderer. Level 0 keeps the stock path byte-for-byte. */
++/* Integer zoom levels: 100 / 200 / 300% (non-integer 150% was poor). */
++#define HH_ZOOM_TEXTURE_COUNT 3
++static const int hhZoomPercents[HH_ZOOM_TEXTURE_COUNT] = { 100, 200, 300 };
++static SDL_Texture *ZoomTextures[4] = {0};
++/* Dedicated atlas for the native-scale detail popup. Built at the exact pixel
++ * size the popup uses, so its glyphs are crisp instead of stretched. */
++static SDL_Texture *DetailTexture = NULL;
++static int detailTileWidth = -1, detailTileHeight = -1;
++static int zoomTileWidth = -1, zoomTileHeight = -1;
++static int hhViewCols = DCOLS, hhViewRows = DROWS;
++static int hhCamX = 0, hhCamY = 0;
++static int hhCameraLevel = -1;
++static int hhCameraActive = 0;
++/* Stage 6: 0 = MAP viewport (centered on player), 1 = SCREEN viewport for core
++ * full-screen text overlays (scrollable). Changing mode forces a full refresh
++ * and an atlas rebuild because the cell geometry differs. */
++static int hhViewMode = 0, hhPrevViewMode = -1;
++static int hhPrevCamX = -1, hhPrevCamY = -1;
++/* Inventory zoom: source rectangle of the core's active menu window. */
++static int hhInvSrcX = 0, hhInvSrcY = 0, hhInvSrcW = 0, hhInvSrcH = 0;
++static int hhInvOx = 0, hhInvOy = 0;
++static int hhInvCellW = HH_INV_TILE_W, hhInvCellH = HH_INV_TILE_H;
++/* Detail mode scales to fit the whole box; list mode keeps the fixed 2x cell
++ * and follows the focused row. */
++static int hhInvDynamic = 0;
++static int hhPrevInvSrcX = -1, hhPrevInvSrcY = -1,
++           hhPrevInvSrcW = -1, hhPrevInvSrcH = -1;
++static int hhPrevInvCellW = -1, hhPrevInvCellH = -1;
++/* Stage 5 UX: previous detail-popup rect, used to repaint cells when the
++ * popup appears, moves with the cursor or is erased. */
++static short hhDetailPrevX = -1, hhDetailPrevY = -1,
++             hhDetailPrevW = -1, hhDetailPrevH = -1;
++#endif
++
+ 
+ int windowWidth = -1;               // the SDL window's width (in "screen units", not pixels)
+ int windowHeight = -1;              // the SDL window's height (in "screen units", not pixels)
+@@ -579,6 +621,341 @@
+ }
+ 
+ 
++#ifdef BROGUE_HANDHELD
++/* Build the detail-popup atlas at exactly the pixel size used to draw it.
++ * Stretching the stock atlas looked blurry; downscaling the source PNG afresh
++ * at this size keeps every glyph sharp. */
++static void hhUpdateDetailAtlas(SDL_Renderer *renderer, int tw, int th) {
++    int savedW, savedH, surfaceWidth = 1, surfaceHeight = 1;
++    SDL_Surface *surface;
++    if (DetailTexture && detailTileWidth == tw && detailTileHeight == th) return;
++    if (DetailTexture) {
++        SDL_DestroyTexture(DetailTexture);
++        DetailTexture = NULL;
++    }
++    while (surfaceWidth < tw * TILE_COLS) surfaceWidth *= 2;
++    while (surfaceHeight < th * TILE_ROWS) surfaceHeight *= 2;
++    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
++    savedW = baseTileWidth;
++    savedH = baseTileHeight;
++    baseTileWidth = tw;
++    baseTileHeight = th;
++    surface = SDL_CreateRGBSurfaceWithFormat(0, surfaceWidth, surfaceHeight,
++                                             32, SDL_PIXELFORMAT_ARGB8888);
++    if (!surface) sdlfatal(__FILE__, __LINE__);
++    for (int row = 0; row < TILE_ROWS; row++) {
++        for (int col = 0; col < TILE_COLS; col++) {
++            downscaleTile(surface, tw, th, row, col, false);
++        }
++    }
++    DetailTexture = SDL_CreateTextureFromSurface(renderer, surface);
++    if (!DetailTexture) sdlfatal(__FILE__, __LINE__);
++    if (SDL_SetTextureBlendMode(DetailTexture, SDL_BLENDMODE_BLEND) < 0) sdlfatal(__FILE__, __LINE__);
++    SDL_FreeSurface(surface);
++    baseTileWidth = savedW;
++    baseTileHeight = savedH;
++    detailTileWidth = tw;
++    detailTileHeight = th;
++}
++
++/* Build the larger glyph atlas by downscaling the same high-res source PNG at
++ * the zoom tile size — crisp at any level, unlike scaling the finished frame.
++ * downscaleTile() sizes text glyphs from the baseTile globals, so they are
++ * swapped in for the duration of the build and then restored. */
++static void hhUpdateCamera(SDL_Renderer *renderer, int outputWidth, int outputHeight) {
++    int level = hhZoomLevel();
++    int mapX0, mapY0, mapW, mapH, tw, th, i, savedW, savedH;
++
++    /* Stage 6: core text screens (help/archive/discoveries/feats) keep the 2x
++     * transform with a vertical-only SCREEN viewport. Button-driven screens
++     * (inventory, item actions, confirmations), the OSK, our Start menu and
++     * title/death/playback stay at 1:1 — at 2x their panels were drawn under
++     * the zoomed map and became unreadable. */
++    /* Core text screens always use the 80x24 device canvas, even when the
++     * player's zoom setting is 100% (otherwise they fall back to native
++     * coordinates and occupy only ~80% of the display). */
++    /* Zoomed modal viewport: inventory list/detail and yes-no confirmations
++     * are scaled to their core window at 200% zoom instead of dropping the
++     * whole screen back to 1:1. At 100% everything stays native. */
++    boolean invZoom = ((hhInventoryOpen || hhConfirmActive)
++                       && rogue.gameInProgress
++                       && !rogue.gameHasEnded && !rogue.playbackMode
++                       && hhZoomLevel() > 0);
++    if (invZoom) {
++        hhViewMode = 2;
++        level = 1;   /* atlas is built at the inventory cell size below */
++    } else if (hhCoreScreen != HH_CORE_SCREEN_NONE && rogue.gameInProgress
++        && !rogue.gameHasEnded && !rogue.playbackMode) {
++        level = 1;   /* atlas is built at the canvas cell size below */
++    } else {
++        level = (level > 0
++                 && rogue.gameInProgress && !rogue.gameHasEnded
++                 && !rogue.playbackMode
++                 && hhActiveMenuState == (buttonState *) 0
++                 && !hhInventoryOpen
++                 && !hhTextInputActive)
++                ? level : 0;
++    }
++    hhCameraActive = (level > 0);
++
++    /* The detail popup follows the examine/target cursor. When its rectangle
++     * changes, repaint the whole map so stale pixels from the old position and
++     * map cells that the popup used to cover are redrawn (software renderer
++     * keeps pixels that are not explicitly refreshed). */
++    if (hhDetailBoxX != hhDetailPrevX || hhDetailBoxY != hhDetailPrevY
++        || hhDetailBoxW != hhDetailPrevW || hhDetailBoxH != hhDetailPrevH) {
++        for (int y = 0; y < ROWS; y++) {
++            for (int x = 0; x < COLS; x++) {
++                screenTiles[y][x].needsRefresh = 1;
++            }
++        }
++        hhDetailPrevX = hhDetailBoxX;
++        hhDetailPrevY = hhDetailBoxY;
++        hhDetailPrevW = hhDetailBoxW;
++        hhDetailPrevH = hhDetailBoxH;
++    }
++
++    if (level <= 0 || level >= (int) (sizeof(hhZoomPercents) / sizeof(hhZoomPercents[0]))) {
++        if (hhCameraLevel > 0) {
++            for (i = 0; i < HH_ZOOM_TEXTURE_COUNT; i++) {
++                if (ZoomTextures[i]) SDL_DestroyTexture(ZoomTextures[i]);
++                ZoomTextures[i] = NULL;
++            }
++            zoomTileWidth = zoomTileHeight = -1;
++        }
++        hhCameraLevel = level;
++        return;
++    }
++
++    /* Stage 6: SCREEN mode for full-screen core text overlays; MAP mode for
++     * gameplay/targeting. SCREEN uses 50x16 cells over rows 0..33 so all four
++     * text screens stay readable and can be scrolled with the D-pad. */
++    if (!invZoom) {
++        hhViewMode = (hhCoreScreen != HH_CORE_SCREEN_NONE) ? 1 : 0;
++    }
++    if (hhViewMode == 2) {
++        /* Only the active menu window (item list or detail box) is drawn.
++         * Everything else — map, sidebar, messages, bar — is skipped below. */
++        hhViewCols = HH_INV_VIEW_COLS;
++        hhViewRows = HH_INV_VIEW_ROWS;
++        /* Detail boxes and confirm dialogs fit their whole window on screen;
++         * the item list keeps the fixed 2x cell with focus-follow scrolling. */
++        hhInvDynamic = (hhInventoryItem != (item *) 0) || hhConfirmActive;
++        if (hhActiveMenuState) {
++            hhInvSrcX = hhActiveMenuState->winX;
++            hhInvSrcY = hhActiveMenuState->winY;
++            hhInvSrcW = max(1, min(COLS - hhInvSrcX, hhActiveMenuState->winWidth));
++            hhInvSrcH = max(1, min(ROWS - hhInvSrcY, hhActiveMenuState->winHeight));
++        } else {
++            hhInvSrcX = mapToWindowX(0);
++            hhInvSrcY = MESSAGE_LINES;
++            hhInvSrcW = HH_INV_VIEW_COLS;
++            hhInvSrcH = HH_INV_VIEW_ROWS;
++        }
++        if (hhInvDynamic) {
++            /* Detail box: scale dynamically to the largest UNIFORM cell that
++             * fits the core's actual window (width varies 40..95 and height
++             * 6..26 depending on the item), so the whole description and all
++             * action buttons are always visible. */
++            const double aspect = (640.0 / COLS) / (480.0 / ROWS);
++            int cw = min(outputWidth / hhInvSrcW,
++                         (int) (outputHeight * aspect / hhInvSrcH));
++            int ch;
++            if (cw < 4) cw = 4;
++            ch = max(8, (int) (cw / aspect + 0.5));
++            while (cw > 4 && (cw * hhInvSrcW > outputWidth
++                              || ch * hhInvSrcH > outputHeight)) {
++                cw--;
++                ch = max(8, (int) (cw / aspect + 0.5));
++            }
++            hhInvCellW = cw;
++            hhInvCellH = ch;
++            hhCamY = hhInvSrcY;                 /* show the whole box */
++            hhInvOy = (outputHeight - hhInvSrcH * ch) / 2;
++        } else {
++            /* Item list: fixed 2x cell, scroll to keep the focused row visible. */
++            int fy = hhInvSrcY;
++            hhInvCellW = HH_INV_TILE_W;
++            hhInvCellH = HH_INV_TILE_H;
++            if (hhActiveMenuState && hhActiveMenuState->buttonFocused >= 0
++                && hhActiveMenuState->buttonFocused < hhActiveMenuState->buttonCount) {
++                fy = hhActiveMenuState->buttons[hhActiveMenuState->buttonFocused].y;
++            }
++            hhCamY = max(hhInvSrcY,
++                         min(hhInvSrcY + hhInvSrcH - HH_INV_VIEW_ROWS,
++                             fy - HH_INV_VIEW_ROWS / 2));
++            hhInvOy = (outputHeight - HH_INV_VIEW_ROWS * HH_INV_TILE_H) / 2;
++        }
++        hhInvOx = (outputWidth - hhInvSrcW * hhInvCellW) / 2;
++    } else if (hhViewMode == 1) {
++        hhViewCols = HH_SCREEN_CANVAS_COLS; /* 80: core x 0..79 -> full width */
++        hhViewRows = HH_SCREEN_CANVAS_ROWS; /* 24 rows of a uniform 8x20 cell */
++        mapX0 = 0;
++        mapY0 = 0;
++        mapW = outputWidth;
++        mapH = outputHeight;
++        hhCamX = 0;                         /* canvas starts at core column 0 */
++        hhCamY = 0;                         /* all content fits; no scrolling */
++    } else {
++        hhViewCols = max(1, DCOLS * 100 / hhZoomPercents[level]);
++        hhViewRows = max(1, DROWS * 100 / hhZoomPercents[level]);
++        mapX0 = mapToWindowX(0) * outputWidth / COLS;
++        mapY0 = MESSAGE_LINES * outputHeight / ROWS;
++        mapW = outputWidth - mapX0;
++        mapH = (MESSAGE_LINES + DROWS) * outputHeight / ROWS - mapY0;
++        {
++            int cx = player.loc.x - hhViewCols / 2;
++            int cy = player.loc.y - hhViewRows / 2;
++            hhCamX = max(0, min(DCOLS - hhViewCols, cx));
++            hhCamY = max(0, min(DROWS - hhViewRows, cy));
++        }
++    }
++    if (hhViewMode == 2) {
++        tw = hhInvCellW;      /* uniform inventory glyph size (fitted) */
++        th = hhInvCellH;
++    } else {
++        tw = max(1, (mapW + hhViewCols - 1) / hhViewCols);
++        th = max(1, (mapH + hhViewRows - 1) / hhViewRows);
++    }
++
++    /* Repaint the whole grid when the viewport mode or origin changes: the
++     * software renderer keeps any cell it is not explicitly told to refresh. */
++    if (hhViewMode != hhPrevViewMode || hhCamX != hhPrevCamX || hhCamY != hhPrevCamY
++        || hhInvSrcX != hhPrevInvSrcX || hhInvSrcY != hhPrevInvSrcY
++        || hhInvSrcW != hhPrevInvSrcW || hhInvSrcH != hhPrevInvSrcH
++        || hhInvCellW != hhPrevInvCellW || hhInvCellH != hhPrevInvCellH) {
++        for (int y = 0; y < ROWS; y++) {
++            for (int x = 0; x < COLS; x++) {
++                screenTiles[y][x].needsRefresh = 1;
++            }
++        }
++        hhPrevViewMode = hhViewMode;
++        hhPrevCamX = hhCamX;
++        hhPrevCamY = hhCamY;
++        hhPrevInvSrcX = hhInvSrcX;
++        hhPrevInvSrcY = hhInvSrcY;
++        hhPrevInvSrcW = hhInvSrcW;
++        hhPrevInvSrcH = hhInvSrcH;
++        hhPrevInvCellW = hhInvCellW;
++        hhPrevInvCellH = hhInvCellH;
++    }
++
++    if (level == hhCameraLevel && zoomTileWidth == tw && zoomTileHeight == th
++            && ZoomTextures[0]) {
++        return;
++    }
++    hhCameraLevel = level;
++
++    for (i = 0; i < 3; i++) {
++        if (ZoomTextures[i]) SDL_DestroyTexture(ZoomTextures[i]);
++        ZoomTextures[i] = NULL;
++    }
++    zoomTileWidth = tw;
++    zoomTileHeight = th;
++
++    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
++    savedW = baseTileWidth;
++    savedH = baseTileHeight;
++    baseTileWidth = tw;
++    baseTileHeight = th;
++    {
++        int surfaceWidth = 1, surfaceHeight = 1;
++        SDL_Surface *surface;
++        while (surfaceWidth < tw * TILE_COLS) surfaceWidth *= 2;
++        while (surfaceHeight < th * TILE_ROWS) surfaceHeight *= 2;
++        surface = SDL_CreateRGBSurfaceWithFormat(0, surfaceWidth, surfaceHeight,
++                                                 32, SDL_PIXELFORMAT_ARGB8888);
++        if (!surface) sdlfatal(__FILE__, __LINE__);
++        for (int row = 0; row < TILE_ROWS; row++) {
++            for (int col = 0; col < TILE_COLS; col++) {
++                downscaleTile(surface, tw, th, row, col, false);
++            }
++        }
++        ZoomTextures[0] = SDL_CreateTextureFromSurface(renderer, surface);
++        if (!ZoomTextures[0]) sdlfatal(__FILE__, __LINE__);
++        if (SDL_SetTextureBlendMode(ZoomTextures[0], SDL_BLENDMODE_BLEND) < 0) sdlfatal(__FILE__, __LINE__);
++        SDL_FreeSurface(surface);
++    }
++    baseTileWidth = savedW;
++    baseTileHeight = savedH;
++
++    /* Repaint cells that just entered the viewport (software renderer). */
++    for (int y = MESSAGE_LINES; y < MESSAGE_LINES + DROWS; y++) {
++        for (int x = mapToWindowX(0); x < COLS; x++) {
++            screenTiles[y][x].needsRefresh = 1;
++        }
++    }
++}
++
++/* Map a core screen cell to its output rectangle. Cells outside the camera
++ * viewport return false and are skipped. The sidebar, message rows and the
++ * bottom button bar always use the native transform. */
++static boolean hhCellDest(int x, int y, int outputWidth, int outputHeight,
++                          SDL_Rect *dest, int *isZoom) {
++    int mx, my, mapX0, mapY0, mapW, mapH, cx, cy;
++    *isZoom = 0;
++    /* Inventory zoom: ONLY the active menu window is drawn. Everything else
++     * is skipped (the frame is cleared to black first), so the dungeon map,
++     * sidebar, messages and button bar cannot appear over the inventory. */
++    if (hhCameraActive && hhViewMode == 2) {
++        if (x < hhInvSrcX || x >= hhInvSrcX + hhInvSrcW
++            || y < hhCamY || y >= hhCamY + hhInvSrcH) {
++            return false;
++        }
++        dest->x = hhInvOx + (x - hhInvSrcX) * hhInvCellW;
++        dest->w = hhInvCellW;
++        dest->y = hhInvOy + (y - hhCamY) * hhInvCellH;
++        dest->h = hhInvCellH;
++        *isZoom = 1;
++        return true;
++    }
++    /* Stage 6 SCREEN mode: a device-specific 80x24 canvas mapped uniformly
++     * to the whole display. Cells outside it (including the stat sidebar)
++     * are not drawn, so the sidebar can never appear on top of the page. */
++    if (hhCameraActive && hhViewMode == 1) {
++        if (x < 0 || x >= HH_SCREEN_CANVAS_COLS
++            || y < 0 || y >= HH_SCREEN_CANVAS_ROWS) {
++            return false;   /* skipped: no output rect for off-canvas cells */
++        }
++        cx = x;
++        cy = y;
++        dest->x = cx * outputWidth / hhViewCols;
++        dest->w = (cx + 1) * outputWidth / hhViewCols - dest->x;
++        dest->y = cy * outputHeight / hhViewRows;
++        dest->h = (cy + 1) * outputHeight / hhViewRows - dest->y;
++        *isZoom = 1;
++        return true;
++    }
++    if (!hhCameraActive
++            || x < mapToWindowX(0) || x >= COLS
++            || y < MESSAGE_LINES || y >= MESSAGE_LINES + DROWS) {
++        dest->x = x * outputWidth / COLS;
++        dest->y = y * outputHeight / ROWS;
++        dest->w = ((x + 1) * outputWidth / COLS) - (x * outputWidth / COLS);
++        dest->h = ((y + 1) * outputHeight / ROWS) - (y * outputHeight / ROWS);
++        return true;
++    }
++    mx = x - mapToWindowX(0);
++    my = y - MESSAGE_LINES;
++    if (mx < hhCamX || mx >= hhCamX + hhViewCols
++            || my < hhCamY || my >= hhCamY + hhViewRows) {
++        return false;
++    }
++    mapX0 = mapToWindowX(0) * outputWidth / COLS;
++    mapY0 = MESSAGE_LINES * outputHeight / ROWS;
++    mapW = outputWidth - mapX0;
++    mapH = (MESSAGE_LINES + DROWS) * outputHeight / ROWS - mapY0;
++    cx = mx - hhCamX;
++    cy = my - hhCamY;
++    dest->x = mapX0 + cx * mapW / hhViewCols;
++    dest->w = (cx + 1) * mapW / hhViewCols - cx * mapW / hhViewCols;
++    dest->y = mapY0 + cy * mapH / hhViewRows;
++    dest->h = (cy + 1) * mapH / hhViewRows - cy * mapH / hhViewRows;
++    *isZoom = 1;
++    return true;
++}
++#endif
++
+ /// Updates the screen buffer.
+ ///
+ /// \param row row on screen (between 0 and ROWS-1)
+@@ -644,11 +1021,27 @@
+ 
+     createTextures(renderer, outputWidth, outputHeight);
+ 
++#ifdef BROGUE_HANDHELD
++    hhUpdateCamera(renderer, outputWidth, outputHeight);
++    hhDrawInGameMenuBuffer();   /* rebuild the Brogue-style Start menu each frame */
++#endif
++
+     if (!softwareRendering) {
+         // black out the frame (double-buffering invalidated it)
+         if (SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0) < 0) sdlfatal(__FILE__, __LINE__);
+         if (SDL_RenderClear(renderer) < 0) sdlfatal(__FILE__, __LINE__);
+     }
++#ifdef BROGUE_HANDHELD
++    /* Inventory zoom draws only the active menu window; explicitly clear the
++     * software-rendered surface so map/message pixels cannot bleed through. */
++    if (hhViewMode == 2) {
++        /* Brogue navy backdrop instead of bare black: empty space around a
++         * short description reads as panel, not a rendering gap. */
++        SDL_Rect full = { 0, 0, outputWidth, outputHeight };
++        if (SDL_SetRenderDrawColor(renderer, 10, 9, 26, 255) < 0) sdlfatal(__FILE__, __LINE__);
++        if (SDL_RenderFillRect(renderer, &full) < 0) sdlfatal(__FILE__, __LINE__);
++    }
++#endif
+ 
+     // To please the OpenGL renderer, we'll proceed in 5 steps:
+     //  -1. background colors
+@@ -657,6 +1050,17 @@
+     //  2.  Textures[2]
+     //  3.  Textures[3]
+ 
++#ifdef BROGUE_HANDHELD
++    /* Focused row of the zoomed modal, used below to keep its highlight while
++     * every other cell gets a uniform panel background (see step < 0). */
++    int hhFocusRow = -1;
++    if (hhViewMode == 2 && hhActiveMenuState
++        && hhActiveMenuState->buttonFocused >= 0
++        && hhActiveMenuState->buttonFocused < hhActiveMenuState->buttonCount) {
++        hhFocusRow = hhActiveMenuState->buttons[hhActiveMenuState->buttonFocused].y;
++    }
++#endif
++
+     for (int step = -1; step < numTextures; step++) {
+ 
+         for (int x = 0; x < COLS; x++) {
+@@ -672,26 +1076,46 @@
+                     continue; // software rendering does not use double-buffering, so the tile is still on screen
+                 }
+ 
++                SDL_Rect dest;
++#ifdef BROGUE_HANDHELD
++                int isZoom = 0;
++                if (!hhCellDest(x, y, outputWidth, outputHeight, &dest, &isZoom)) continue;
++#else
++                dest.w = tileWidth;
++                dest.h = tileHeight;
++                dest.x = x * outputWidth / COLS;
++                dest.y = y * outputHeight / ROWS;
++#endif
++
+                 if (step < 0) {
+-                    if (!softwareRendering && tile->backRed == 0 && tile->backGreen == 0 && tile->backBlue == 0) {
++                    int br = round(2.55 * tile->backRed);
++                    int bg = round(2.55 * tile->backGreen);
++                    int bb = round(2.55 * tile->backBlue);
++#ifdef BROGUE_HANDHELD
++                    if (hhViewMode == 2) {
++                        /* The core's per-cell back colors still hold dungeon
++                         * map remnants, which show up as irregular black
++                         * blocks behind the scaled inventory text. Use one
++                         * uniform navy panel color; keep the focused row's
++                         * own highlight so the selection stays visible. */
++                        if (y != hhFocusRow) {
++                            br = 10; bg = 9; bb = 26;
++                        }
++                    } else
++#endif
++                    if (!softwareRendering && br == 0 && bg == 0 && bb == 0) {
+                         continue; // SDL_RenderClear already painted everything black
+                     }
+ 
+-                    SDL_Rect dest;
+-                    dest.w = tileWidth;
+-                    dest.h = tileHeight;
+-                    dest.x = x * outputWidth / COLS;
+-                    dest.y = y * outputHeight / ROWS;
+-
+                     // paint the background
+-                    if (SDL_SetRenderDrawColor(renderer,
+-                        round(2.55 * tile->backRed),
+-                        round(2.55 * tile->backGreen),
+-                        round(2.55 * tile->backBlue), 255) < 0) sdlfatal(__FILE__, __LINE__);
++                    if (SDL_SetRenderDrawColor(renderer, br, bg, bb, 255) < 0) sdlfatal(__FILE__, __LINE__);
+                     if (SDL_RenderFillRect(renderer, &dest) < 0) sdlfatal(__FILE__, __LINE__);
+ 
+                 } else {
+                     int textureIndex = (numTextures < 4 ? 0 : (tileWidth > baseTileWidth ? 1 : 0) + (tileHeight > baseTileHeight ? 2 : 0));
++#ifdef BROGUE_HANDHELD
++                    if (isZoom) textureIndex = 0; /* the zoom atlas has one texture */
++#endif
+                     if (step != textureIndex) {
+                         continue; // this tile uses another texture and gets painted at another step
+                     }
+@@ -705,29 +1129,149 @@
+                     }
+ 
+                     SDL_Rect src;
+-                    src.w = baseTileWidth  + (step == 1 || step == 3 ? 1 : 0);
+-                    src.h = baseTileHeight + (step == 2 || step == 3 ? 1 : 0);
++#ifdef BROGUE_HANDHELD
++                    if (isZoom) {
++                        src.w = zoomTileWidth;
++                        src.h = zoomTileHeight;
++                    } else
++#endif
++                    {
++                        src.w = baseTileWidth  + (step == 1 || step == 3 ? 1 : 0);
++                        src.h = baseTileHeight + (step == 2 || step == 3 ? 1 : 0);
++                    }
+                     src.x = src.w * tileColumn;
+                     src.y = src.h * tileRow;
+ 
+-                    SDL_Rect dest;
+-                    dest.w = tileWidth;
+-                    dest.h = tileHeight;
+-                    dest.x = x * outputWidth / COLS;
+-                    dest.y = y * outputHeight / ROWS;
+-
+                     // blend the foreground
++#ifdef BROGUE_HANDHELD
++                    SDL_Texture *tex = isZoom ? ZoomTextures[0] : Textures[step];
++                    if (SDL_SetTextureColorMod(tex,
++                        round(2.55 * tile->foreRed),
++                        round(2.55 * tile->foreGreen),
++                        round(2.55 * tile->foreBlue)) < 0) sdlfatal(__FILE__, __LINE__);
++                    if (SDL_RenderCopy(renderer, tex, &src, &dest) < 0) sdlfatal(__FILE__, __LINE__);
++#else
+                     if (SDL_SetTextureColorMod(Textures[step],
+                         round(2.55 * tile->foreRed),
+                         round(2.55 * tile->foreGreen),
+                         round(2.55 * tile->foreBlue)) < 0) sdlfatal(__FILE__, __LINE__);
+                     if (SDL_RenderCopy(renderer, Textures[step], &src, &dest) < 0) sdlfatal(__FILE__, __LINE__);
++#endif
+                 }
+             }
+         }
+     }
+ 
+ #ifdef BROGUE_HANDHELD
++    /* Stage 5 UX: draw the core's detail popup from its own display buffer,
++     * slightly larger than 1:1, on top of the zoomed map. The map tiles are
++     * never modified, so there are no holes or black seams underneath. */
++    if (hhDetailBoxW > 0 && hhDetailBoxH > 0) {
++        const double detailScale = 1.2;   /* a couple of points larger than 1:1 */
++        int cellW = (int) (outputWidth / (double) COLS * detailScale);
++        int cellH = (int) (outputHeight / (double) ROWS * detailScale);
++        int boxPxW = hhDetailBoxW * cellW;
++        int boxPxH = hhDetailBoxH * cellH;
++        int ox = (outputWidth - boxPxW) / 2;
++        int oy = MESSAGE_LINES * outputHeight / ROWS + 4;
++        SDL_Rect boxRect;
++
++        hhUpdateDetailAtlas(renderer, cellW, cellH);
++
++        /* Uniform 80% opaque black background: the game shows through, like
++         * the core's original info box, without the old black/transparent
++         * patchwork. */
++        boxRect.x = ox;
++        boxRect.y = oy;
++        boxRect.w = boxPxW;
++        boxRect.h = boxPxH;
++        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
++        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 204);
++        SDL_RenderFillRect(renderer, &boxRect);
++        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
++
++        for (int y = hhDetailBoxY; y < hhDetailBoxY + hhDetailBoxH; y++) {
++            for (int x = hhDetailBoxX; x < hhDetailBoxX + hhDetailBoxW; x++) {
++                cellDisplayBuffer *c = &hhDetailBuffer.cells[x][y];
++                int glyph = (int) c->character;
++                SDL_Rect src, dest;
++                if (glyph < 0 || glyph >= TILE_ROWS * TILE_COLS) continue;
++                if (tileEmpty[glyph / 16][glyph % 16]) continue;
++                src.w = cellW;
++                src.h = cellH;
++                src.x = src.w * (glyph % 16);
++                src.y = src.h * (glyph / 16);
++                dest.x = ox + (x - hhDetailBoxX) * cellW;
++                dest.y = oy + (y - hhDetailBoxY) * cellH;
++                dest.w = cellW;
++                dest.h = cellH;
++                if (SDL_SetTextureColorMod(DetailTexture,
++                    round(2.55 * (int) c->foreColorComponents[0]),
++                    round(2.55 * (int) c->foreColorComponents[1]),
++                    round(2.55 * (int) c->foreColorComponents[2])) < 0) sdlfatal(__FILE__, __LINE__);
++                if (SDL_RenderCopy(renderer, DetailTexture, &src, &dest) < 0) sdlfatal(__FILE__, __LINE__);
++            }
++        }
++    }
++
++    /* Brogue-style Start menu: one translucent navy wash for the panel, a
++     * single Brogue hover bar on the focused row, and glyphs from the same
++     * tile font the rest of Brogue uses. No per-line background bars. */
++    if (hhMenuActive && hhDetailBoxW <= 0) {
++        int cellW = HH_MENU_TILE_W;
++        int cellH = HH_MENU_TILE_H;
++        int ox = (outputWidth - hhMenuW * cellW) / 2;
++        int oy = (outputHeight - hhMenuH * cellH) / 2;
++
++        hhUpdateDetailAtlas(renderer, cellW, cellH);
++        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
++        {
++            SDL_Rect panel = { ox, oy, hhMenuW * cellW, hhMenuH * cellH };
++            SDL_SetRenderDrawColor(renderer, 10, 9, 26, 195);
++            SDL_RenderFillRect(renderer, &panel);
++        }
++        if (hhMenuFocusRow >= hhMenuY && hhMenuFocusRow < hhMenuY + hhMenuH) {
++            cellDisplayBuffer *f = &hhMenuBuffer.cells[hhMenuX + 2][hhMenuFocusRow];
++            SDL_Rect bar = { ox + 2 * cellW,
++                             oy + (hhMenuFocusRow - hhMenuY) * cellH,
++                             (hhMenuW - 4) * cellW, cellH };
++            SDL_SetRenderDrawColor(renderer,
++                round(2.55 * (int) f->backColorComponents[0]),
++                round(2.55 * (int) f->backColorComponents[1]),
++                round(2.55 * (int) f->backColorComponents[2]), 210);
++            SDL_RenderFillRect(renderer, &bar);
++        }
++        for (int y = 0; y < hhMenuH; y++) {
++            for (int x = 0; x < hhMenuW; x++) {
++                cellDisplayBuffer *c = &hhMenuBuffer.cells[hhMenuX + x][hhMenuY + y];
++                SDL_Rect dest;
++                int glyph;
++                SDL_Rect src;
++                Uint8 alpha = (Uint8) (c->opacity * 255 / 100);
++
++                dest.x = ox + x * cellW;
++                dest.y = oy + y * cellH;
++                dest.w = cellW;
++                dest.h = cellH;
++
++                glyph = (int) c->character;
++                if (glyph < 0 || glyph >= TILE_ROWS * TILE_COLS) continue;
++                if (tileEmpty[glyph / 16][glyph % 16]) continue;
++                src.w = cellW; src.h = cellH;
++                src.x = src.w * (glyph % 16);
++                src.y = src.h * (glyph / 16);
++                if (SDL_SetTextureColorMod(DetailTexture,
++                    round(2.55 * (int) c->foreColorComponents[0]),
++                    round(2.55 * (int) c->foreColorComponents[1]),
++                    round(2.55 * (int) c->foreColorComponents[2])) < 0) sdlfatal(__FILE__, __LINE__);
++                if (SDL_SetTextureAlphaMod(DetailTexture, alpha) < 0) sdlfatal(__FILE__, __LINE__);
++                if (SDL_RenderCopy(renderer, DetailTexture, &src, &dest) < 0) sdlfatal(__FILE__, __LINE__);
++            }
++        }
++        SDL_SetTextureAlphaMod(DetailTexture, 255);
++        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
++    }
++
+     hhuiRender(renderer);
+ #endif
+     SDL_RenderPresent(renderer);

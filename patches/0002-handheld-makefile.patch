@@ -1,0 +1,15 @@
+--- a/Makefile
++++ b/Makefile
+@@ -49,6 +49,12 @@
+ cppflags += -DBROGUE_WEB
+ endif
+ 
++ifeq ($(BROGUE_HANDHELD),1)
++sources += $(addprefix src/platform/,handheld-platform.c handheld-sdl.c handheld-input.c handheld-ui-state.c handheld-ui.c)
++cppflags += -DBROGUE_HANDHELD
++libs += -lSDL2_ttf
++endif
++
+ ifeq ($(RAPIDBROGUE),YES)
+ cppflags += -DRAPID_BROGUE
+ endif

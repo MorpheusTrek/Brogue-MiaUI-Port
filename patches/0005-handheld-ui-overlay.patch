@@ -1,0 +1,23 @@
+--- a/src/platform/tiles.c
++++ b/src/platform/tiles.c
+@@ -4,6 +4,10 @@
+ #include "platform.h"
+ #include "tiles.h"
+ 
++#ifdef BROGUE_HANDHELD
++#include "handheld-ui.h"
++#endif
++
+ #define PI  3.14159265358979323846
+ 
+ #define PNG_WIDTH    2048   // width (px) of the source PNG
+@@ -723,6 +727,9 @@
+         }
+     }
+ 
++#ifdef BROGUE_HANDHELD
++    hhuiRender(renderer);
++#endif
+     SDL_RenderPresent(renderer);
+ 
+     // the screen is now up to date

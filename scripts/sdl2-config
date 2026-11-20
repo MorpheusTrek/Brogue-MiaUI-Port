@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Minimal sdl2-config compatibility wrapper for the Koriki/Batocera SDK.
+# Upstream Brogue CE calls `sdl2-config --cflags` / `--libs`; the SDK provides pkg-config instead.
+# Translates those calls to: pkg-config [options] sdl2  (with sysroot env from koriki-env.sh).
+set -u
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib.sh"
+
+PKG="${PKG_CONFIG:-$SDK_DIR/bin/pkg-config}"
+[ -x "$PKG" ] || PKG="pkg-config"
+
+flags=()
+for arg in "$@"; do
+  case "$arg" in
+    --prefix=*) flags+=("--define-variable=prefix=${arg#--prefix=}") ;;
+    *) flags+=("$arg") ;;
+  esac
+done
+
+exec "$PKG" "${flags[@]}" sdl2
